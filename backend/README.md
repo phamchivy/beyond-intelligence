@@ -7,7 +7,7 @@ Thư mục này chứa mã nguồn **Backend Service** thuộc dự án **Beyond
 ## Công Nghệ Sử Dụng
 
 - **Framework:** .NET 8 Web API
-- **API Architecture:** [FastEndpoints](https://fastend-points.com/) (REPR Pattern - Request-Endpoint-Response)
+- **API Architecture:** [FastEndpoints](https://fast-endpoints.com/) (REPR Pattern - Request-Endpoint-Response)
 - **API Documentation:** Swagger UI (OpenAPI)
 - **Communication:** RESTful JSON APIs / CORS Enabled cho NuxtJS
 
