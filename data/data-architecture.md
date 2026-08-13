@@ -12,104 +12,169 @@
 
 ## 1. Purpose and scope
 
-The `data/` layer owns the **Sense** step of the platform's philosophy (`Sense → Understand → Reason → Simulate → Decide → Act → Learn`). It turns heterogeneous, untrusted external data into two trustworthy products:
+The `data/` layer owns the **Sense** step of the platform's philosophy (`Sense → Understand → Reason → Simulate → Decide → Act → Learn`). It takes messy, untyped outside data — CSVs, API responses, database rows, documents — and turns it into two trusted products:
 
-1. **Structured data** the backend and the simulation layer can query with confidence.
-2. **Retrievable knowledge** the agent layer can search over.
+1. **Structured data** the backend and the simulation layer can query.
+2. **Retrievable knowledge** document chunks go into the retrieval index for the agent layer to search.
 
 ### In scope
 
-| Responsibility | Where it is specified |
-|---|---|
-| Ingest CSV, Excel, JSON, API, Database, Documents | §7.1 |
-| Validation and data quality | §10 |
-| Cleaning, typing, deduplication, normalization | §7.2 |
-| Data integration and modelling | §7.3 |
-| Feature / analytics tables | §7.3 |
-| Chunking, embedding, indexing for retrieval | §7.4, §12 |
-| Retrieval implementation behind the agent's port | §12 |
-| Data contracts toward the backend | §9, §11 |
-| Pipeline observability and lineage | §13 |
-| The evaluation harness (DE half of Platform 7) | §7.5 |
+| Responsibility                                    | Where it is specified |
+| ------------------------------------------------- | --------------------- |
+| Ingest CSV, Excel, JSON, API, Database, Documents | §7.1                  |
+| Validation and data quality                       | §10                   |
+| Cleaning, typing, deduplication, normalization    | §7.2                  |
+| Data integration and modelling                    | §7.3                  |
+| Feature / analytics tables                        | §7.3                  |
+| Chunking, embedding, indexing for retrieval       | §7.4, §12             |
+| Retrieval implementation behind the agent's port  | §12                   |
+| Data contracts toward the backend                 | §9, §11               |
+| Pipeline observability and lineage                | §13                   |
+| The evaluation harness (DE half of Platform 7)    | §7.5                  |
 
 ### Explicitly out of scope
 
 - **Reasoning over the data.** Context construction, planning and decision generation belong to `agent/`. This layer returns documents and rows; it never interprets them.
 - **Streaming.** Everything here is batch or micro-batch. §17 states the trigger for revisiting that.
 - **Being a warehouse migration.** No attempt to consolidate all company data. One pipeline per dataset that a consumer actually asked for.
-- **Business semantics.** What a "good" record means for a given domain lives in `business/`, expressed as configuration this layer consumes.
+- **Pitch and business-case material.** `business/` holds the hackathon's problem framing, market sizing and go-to-market case — pitch content, not runtime configuration. It is not a dependency of this layer.
 
 ---
 
 ## 2. Architectural stance
 
-The same four layers as `agent/`, with the same single direction of dependency:
+This layer uses Clean Architecture (also called Ports & Adapters). The goal is simple:
 
+> **Business rules must not depend on tools such as dlt, DuckDB, Postgres, MinIO or Dagster. Tools plug into the business rules through small interfaces called ports.**
+
+This separation lets us test pipelines without external services and replace a tool without rewriting business logic.
+
+### The four layers
+
+```text
+orchestration/       starts a use case (Dagster, CLI)
+       │
+       ▼
+application/         coordinates the steps (ingest, normalize, model, index, evaluate)
+       │
+       ▼
+domain/              defines data concepts, rules and ports
+       ▲
+       │ implements the ports
+infrastructure/      talks to tools and external systems
 ```
-Interface (orchestration / CLI)
-        ↓
-Application (pipelines, services)
-        ↓
-Domain (core)
 
-Infrastructure (adapters) ──── implements ────► Domain Ports
-```
+A run follows the diagram from top to bottom:
 
-**Invariant:** the domain does not know which technology is underneath it.
+1. **Orchestration starts it.**
+2. **Application coordinates it.**
+3. **Domain defines what is valid.**
+4. **Infrastructure performs external I/O.**
+
+| Layer | Main question | Contains | May depend on |
+| --- | --- | --- | --- |
+| `orchestration/` | Who starts the work, and when? | Dagster assets, schedules, partitions and CLI commands | Application |
+| `application/` | What steps does the use case perform? | The five pipelines in §7 and their supporting services | Domain; processing engines such as Polars and DuckDB |
+| `domain/` | What do the data concepts mean, and what is valid? | Entities, policies and port definitions (§6) | Standard library, Pydantic and Arrow boundary types |
+| `infrastructure/` | How do we talk to a specific external system? | dlt sources, database adapters, object storage and model adapters | Domain ports; any required SDK, driver or framework |
+
+#### `orchestration/`: start the work
+
+This layer decides when and with which parameters a pipeline runs, for example: “normalize partition `2026-08-12` and retry twice.” It must not contain transformation logic.
+
+A Dagster asset should normally do only two things: call an application pipeline and return its result as metadata.
+
+#### `application/`: coordinate the work
+
+Each pipeline is one use case written as a clear sequence, for example:
+
+1. Read a batch.
+2. Validate it.
+3. Separate valid and invalid rows.
+4. Write both results.
+
+Application code uses domain ports such as `Source` and `Sink`. It may use processing engines such as Polars or DuckDB, but it must not open a specific database connection or call a vendor SDK directly.
+
+#### `domain/`: define meaning and rules
+
+The domain is the stable core. It contains:
+
+- **Entities and policies**, such as `DataContract`, `PartitionKey` and `QualityPolicy`.
+- **Ports**, such as `Source` and `Sink`, which describe required capabilities without naming a tool.
+
+Domain code is plain data and pure logic: it does not open files, run queries or use the network.
+
+A practical test: if a rule cannot be unit-tested without a database, filesystem or orchestration framework, it probably does not belong in `domain/`.
+
+#### `infrastructure/`: connect real tools
+
+Infrastructure implements the domain ports with concrete tools. For example:
+
+- `api_source.py` calls dlt.
+- `pgvector_retriever.py` runs vector SQL.
+- `fsspec_object_store.py` connects to MinIO or S3.
+
+Infrastructure depends on the domain's port definitions. The domain never depends on infrastructure.
+
+### Dependency inversion
+
+The domain defines what it needs; infrastructure supplies it. Never the reverse.
 
 ```python
-# The pipeline knows only:
-batch = source.read(window)
-result = validator.validate(batch, contract)
-sink.write(batch, partition)
+# Application knows only the ports.
+def ingest(source: Source, sink: Sink, window: TimeWindow) -> RunStats:
+    for batch in source.read(window, since=catalog.watermark(source.name)):
+        sink.write(batch, partition=PartitionKey.from_window(window))
 
-# The pipeline must NOT know:
+# Application must never contain tool-specific I/O such as:
 dlt.pipeline(destination="duckdb").run(...)
 duckdb.connect().execute("COPY ...")
 psycopg.connect(...).cursor().execute(...)
 ```
 
-### Absolute prohibitions
+`Source` is a `Protocol` (§6). The dlt import and calls belong in `infrastructure/sources/api_source.py`. This gives us:
+
+1. **Fast tests.** Pass fake `Source` and `Sink` implementations; no Postgres, MinIO or network is needed (§16).
+2. **Replaceable tools.** To replace dlt or pgvector, add another adapter that implements the same port. Application callers do not change.
+
+Concrete adapters are connected to pipelines in one place: `orchestration/resources.py`, the composition root (§18). Everywhere else, application code sees only the port.
+
+This indirection is justified because `data/` is a reusable platform expected to add sources and replace tools. It would be unnecessary for a one-off script that imports a single CSV.
+
+### Hard boundaries
 
 `data/domain/` must not import:
 
-- `dlt`, `dagster`, `dbt` — any ingestion or orchestration framework
-- `duckdb`, `psycopg`, `sqlalchemy`, `s3fs`, `fsspec` — any driver or filesystem client
-- `docling`, `fastembed`, `pymupdf` — any parsing or model library
-- `polars`, `pandas`, `pyarrow` — see the note below
+- ingestion or orchestration frameworks: `dlt`, `dagster`, `dbt`
+- database or filesystem clients: `duckdb`, `psycopg`, `sqlalchemy`, `s3fs`, `fsspec`
+- parsing or model libraries: `docling`, `fastembed`, `pymupdf`
+- dataframe engines: `polars`, `pandas`
 
 > **Use frameworks at the edges, not at the core.**
 
-**The dataframe exception, stated explicitly.** A data layer that refuses to name a dataframe type in its domain ends up passing `Any` everywhere, which costs more than it saves. The rule adopted here: the domain may reference **`pyarrow`-backed types as a boundary format only** (§6, `RecordBatch`), because Arrow is a neutral in-memory standard rather than an engine. Polars and DuckDB are engines and stay in `infrastructure/` and `application/`. If you find yourself wanting `pl.DataFrame` in a domain signature, that logic belongs in `application/`.
+**Arrow exception:** domain ports may use `pyarrow`-backed types, such as `RecordBatch`, as a neutral boundary format (§6). They must not use `pl.DataFrame` or `pandas.DataFrame`; logic that needs those types belongs in `application/`.
 
-### Orchestration is an edge, not the core
+### Keep orchestration thin
 
-This is the rule most easily broken and the most expensive to unbreak.
+Dagster starts and monitors work; it does not perform the transformation.
 
 ```python
-# WRONG — the pipeline is now unrunnable without Dagster
+# Wrong: transformation logic is trapped inside Dagster.
 @asset
 def silver_orders(context):
-    raw = pl.read_parquet(...)          # business logic
-    clean = raw.filter(...)             # business logic
-    context.log.info(...)               # framework
-    return clean.write_parquet(...)     # business logic
+    raw = pl.read_parquet(...)
+    clean = raw.filter(...)
+    context.log.info(...)
+    return clean.write_parquet(...)
 
-# RIGHT — Dagster is a thin caller of a plain function
+# Right: Dagster calls a plain application function.
 @asset(partitions_def=daily)
 def silver_orders(context, store: ObjectStore) -> MaterializeResult:
     stats = normalize_orders(store, partition=context.partition_key)
     return MaterializeResult(metadata=stats.as_dagster_metadata())
 ```
 
-**Test of compliance:** every pipeline in `application/pipelines/` must be callable from a plain `pytest` function with no `dagster` import anywhere in the test. If it cannot, the logic has leaked into the orchestrator.
-
-| Layer | Role | Allowed to know |
-|---|---|---|
-| Domain | Entities, ports, policies — the rules | Standard library, Pydantic, Arrow types |
-| Application | Pipeline use cases, calls the domain through ports | Domain; engines (Polars, DuckDB) |
-| Infrastructure | One adapter per port | SDKs, drivers, frameworks |
-| Interface | Orchestration (Dagster), CLI | Application |
+**Compliance check:** every function in `application/pipelines/` must be callable from a plain `pytest` test with no Dagster import. If it cannot, pipeline logic has leaked into orchestration.
 
 ---
 
@@ -146,13 +211,13 @@ Four layers. The first three are the standard medallion pattern; the fourth exis
       .NET backend                    agent/ layer
 ```
 
-| Layer | Physical store | Format | Engine that writes it | Schema posture | Mutability |
-|---|---|---|---|---|---|
-| Bronze | Object storage (MinIO / S3) | Parquet + zstd | dlt | on read | append-only |
-| Silver | Object storage | Parquet + zstd | Polars | on write | partition overwrite |
-| Gold | Postgres `gold` schema | Postgres tables | DuckDB + dbt, published by `publish_service` | on write | MERGE by key |
-| Index | Postgres `index` schema | tables + `pgvector` HNSW | embed pipeline | on write | upsert by chunk id |
-| Quarantine | Object storage | Parquet + zstd | Polars | on read | append-only |
+| Layer      | Physical store              | Format                   | Engine that writes it                        | Schema posture | Mutability          |
+| ---------- | --------------------------- | ------------------------ | -------------------------------------------- | -------------- | ------------------- |
+| Bronze     | Object storage (MinIO / S3) | Parquet + zstd           | dlt                                          | on read        | append-only         |
+| Silver     | Object storage              | Parquet + zstd           | Polars                                       | on write       | partition overwrite |
+| Gold       | Postgres `gold` schema      | Postgres tables          | DuckDB + dbt, published by `publish_service` | on write       | MERGE by key        |
+| Index      | Postgres `index` schema     | tables + `pgvector` HNSW | embed pipeline                               | on write       | upsert by chunk id  |
+| Quarantine | Object storage              | Parquet + zstd           | Polars                                       | on read        | append-only         |
 
 **Bronze is not optional.** It is tempting to skip it when a pipeline reads one CSV. Don't. Bronze is what makes "we had a bug in the normalizer for three days" a fifteen-minute reprocess instead of a conversation about whether the source still has the data.
 
@@ -160,7 +225,87 @@ Four layers. The first three are the standard medallion pattern; the fourth exis
 
 ---
 
-## 4. Physical topology
+## 4. Technology stack and physical topology
+
+### The stack, end to end
+
+§3 showed what each layer *means*; this shows how data actually moves through it, which pipeline moves it, and which tool does the work.
+
+```mermaid
+flowchart TB
+    subgraph SRC["External sources — §7.1"]
+        S1["CSV / JSON / Parquet"]
+        S2["Excel"]
+        S3["REST API"]
+        S4["Database"]
+        S5["Documents — PDF, DOCX, PPTX"]
+    end
+
+    ING(["<b>ingest</b><br/>dlt"])
+    NORM(["<b>normalize</b><br/>Polars + Pandera"])
+    MOD(["<b>model</b><br/>DuckDB + dbt"])
+    IXP(["<b>index</b><br/>Docling + fastembed"])
+    EVAL(["<b>evaluate</b><br/>scikit-learn<br/>labeled JSONL in git"])
+
+    subgraph LAKE["Object storage — MinIO local, S3 / R2 / GCS cloud"]
+        BRONZE[("Bronze<br/>Parquet + zstd<br/>append-only")]
+        SILVER[("Silver<br/>Parquet + zstd<br/>contract enforced")]
+        QUAR[("Quarantine<br/>rejected rows<br/>+ violation")]
+    end
+
+    subgraph PG["Postgres 16 + pgvector"]
+        GOLD[("gold<br/>dim_* / fct_*")]
+        IDX[("index<br/>chunks + HNSW vectors")]
+        API[["api.v1_* views<br/>the contract surface"]]
+        OPS[("ops<br/>watermarks, run log,<br/>quality violations")]
+    end
+
+    subgraph CONS["Consumers"]
+        NET[".NET 8 backend"]
+        AGENT["agent/ layer"]
+    end
+
+    S1 & S2 & S3 & S4 & S5 --> ING --> BRONZE
+    BRONZE --> NORM --> SILVER
+    NORM -.->|"rejected rows"| QUAR
+    SILVER --> MOD --> GOLD
+    SILVER --> IXP --> IDX
+    BRONZE -.->|"document blobs"| IXP
+    ING -.->|"watermarks, run stats"| OPS
+
+    GOLD --> API
+    API -->|"SQL, read-only role"| NET
+    IDX -->|"Retriever port — §12<br/>pg_trgm + pgvector, RRF"| AGENT
+
+    EVAL -.->|"measures"| IDX
+    EVAL -.->|"measures"| GOLD
+```
+
+The five rounded nodes are the pipelines of §7, each labelled with the tool that implements it; cylinders are stores and the yellow boxes are the systems they live in. Solid arrows are the main data path, dashed ones are side paths — quarantine, document blobs, operational metadata, measurement. Dagster does not appear as a box because it is not in the data path: it schedules and monitors all five pipelines, which is §13's subject.
+
+### Stack decisions
+
+| Concern | Tool | Specified in |
+| --- | --- | --- |
+| Ingestion adapters | dlt | §7.1 |
+| Normalize engine | Polars | §7.2 |
+| Frame contracts | Pandera | §9, §10 |
+| Record contracts, JSON Schema export | Pydantic v2 | §9, §11 |
+| SQL modelling | DuckDB + dbt-core | §7.3 |
+| Object storage | MinIO local, S3 / R2 / GCS cloud, via `fsspec` | §4 |
+| File format | Parquet + zstd | §3 |
+| Serving store | Postgres 16 | §11 |
+| Document parsing | Docling, with `pymupdf4llm` as a fast path | §7.4 |
+| Embeddings | fastembed | §7.4 |
+| Vector and lexical search | `pgvector` + `pg_trgm` + `unaccent` | §12 |
+| Orchestration and quality gating | Dagster — assets, asset checks | §10, §13 |
+| Evaluation metrics | scikit-learn | §7.5 |
+| Logging | structlog | §13 |
+| Packaging, lint, tests, config | uv, Ruff, pytest, pydantic-settings | §16, §18 |
+
+**No table format yet.** There is deliberately no Iceberg or Delta Lake here — plain Parquet partitions are enough while there is one writer per dataset and nothing needs `MERGE` or time travel. §17 records the trigger for adopting one.
+
+Candidates considered, trade-offs and rejected alternatives are in [tech-stack-evaluation.md](tech-stack-evaluation.md); this table records only the outcome.
 
 ### Local — `infrastructure/docker-compose.yml`
 
@@ -194,12 +339,12 @@ Two containers (MinIO, Postgres) plus one process (`dagster dev`). DuckDB and Po
 
 Only the resource configuration changes. No pipeline code is aware of which column it is in.
 
-| Local | Cloud | What changes |
-|---|---|---|
-| MinIO on `:9000` | S3 / R2 / GCS | `OBJECT_STORE_URL`, credentials |
-| Postgres container | Neon / Supabase / RDS | `DATABASE_URL` |
-| DuckDB in-process | DuckDB in-process | nothing |
-| `dagster dev` | Dagster OSS on a container / K8s | deployment manifest only |
+| Local              | Cloud                            | What changes                    |
+| ------------------ | -------------------------------- | ------------------------------- |
+| MinIO on `:9000`   | S3 / R2 / GCS                    | `OBJECT_STORE_URL`, credentials |
+| Postgres container | Neon / Supabase / RDS            | `DATABASE_URL`                  |
+| DuckDB in-process  | DuckDB in-process                | nothing                         |
+| `dagster dev`      | Dagster OSS on a container / K8s | deployment manifest only        |
 
 **This is the whole reason `fsspec`-style URLs and a single `Settings` object are non-negotiable.** The moment a path is hard-coded to `/home/…` or `localhost`, the cloud path stops being free.
 
@@ -348,7 +493,57 @@ data/
 
 ## 6. The ports
 
-Ports are `Protocol` classes. They exist at boundaries where the implementation is expected to change or must be mocked in tests — not for every service (see the agent standard §4 on not over-using interfaces).
+### What is a port?
+
+A **port** is a small interface that describes what the application needs without choosing a specific tool. For example, the application needs “something that can read records,” but it should not care whether those records come from a CSV file, an API or a database.
+
+In this project, ports are written as Python `Protocol` classes.
+
+### What is a `Protocol` class?
+
+`Protocol` comes from Python's `typing` module. It lists the attributes and methods an object must provide. A concrete class satisfies the protocol by having the same shape; it does not need to inherit from the protocol.
+
+```python
+from typing import Iterator, Protocol
+
+
+class Source(Protocol):
+    @property
+    def name(self) -> str: ...
+
+    def read(self, window: TimeWindow, since: Watermark | None) -> Iterator[RecordBatch]: ...
+
+
+# This class satisfies Source because it provides name and read().
+# It does not need to write "class CsvSource(Source)".
+class CsvSource:
+    @property
+    def name(self) -> str:
+        return "orders_csv"
+
+    def read(self, window: TimeWindow, since: Watermark | None) -> Iterator[RecordBatch]:
+        yield from read_csv_batches("orders.csv")
+
+
+def ingest(source: Source, window: TimeWindow) -> None:
+    for batch in source.read(window=window, since=None):
+        process(batch)
+
+
+ingest(CsvSource(), window)  # Accepted because CsvSource matches Source.
+```
+
+This is called **structural typing**: compatibility is based on what an object can do, not what it inherits from.
+
+The roles are:
+
+- **Port:** the required behavior, such as `Source`.
+- **Adapter:** a concrete implementation, such as `CsvSource`, `ApiSource` or `MockSource`.
+- **Application pipeline:** accepts the port and works with any matching adapter.
+
+Use a port only at a boundary where implementations are expected to change or where a fake implementation is useful in tests. Do not create a `Protocol` for every class (see the agent standard §4).
+
+### Port definitions
 
 ```python
 from typing import Protocol, Iterator, Sequence, Mapping
@@ -432,17 +627,17 @@ class Catalog(Protocol):
 
 ### Adapter table
 
-| Port | Adapters | Notes |
-|---|---|---|
-| `Source` | `file_source`, `excel_source`, `api_source`, `database_source`, `mock_source` | §7.1 maps these to the six required source types |
-| `Sink` | `object_store_sink`, `postgres_sink` | both idempotent per partition |
-| `ObjectStore` | `fsspec_object_store` | one adapter covers local, MinIO, S3, R2, GCS |
-| `Validator` | `pandera_validator` | |
-| `DocumentParser` | `docling_parser`, `pymupdf_parser` | dispatch on `supports()` |
-| `Chunker` | `docling_chunker` | |
-| `Embedder` | `fastembed_embedder`, `api_embedder`, `mock_embedder` | `mock_embedder` is deterministic so retrieval tests are stable |
-| `Retriever` | `pgvector_retriever`, `lexical_retriever`, `hybrid_retriever` | `hybrid_retriever` composes the other two |
-| `Catalog` | `postgres_catalog` | |
+| Port             | Adapters                                                                      | Notes                                                          |
+| ---------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `Source`         | `file_source`, `excel_source`, `api_source`, `database_source`, `mock_source` | §7.1 maps these to the six required source types               |
+| `Sink`           | `object_store_sink`, `postgres_sink`                                          | both idempotent per partition                                  |
+| `ObjectStore`    | `fsspec_object_store`                                                         | one adapter covers local, MinIO, S3, R2, GCS                   |
+| `Validator`      | `pandera_validator`                                                           |                                                                |
+| `DocumentParser` | `docling_parser`, `pymupdf_parser`                                            | dispatch on `supports()`                                       |
+| `Chunker`        | `docling_chunker`                                                             |                                                                |
+| `Embedder`       | `fastembed_embedder`, `api_embedder`, `mock_embedder`                         | `mock_embedder` is deterministic so retrieval tests are stable |
+| `Retriever`      | `pgvector_retriever`, `lexical_retriever`, `hybrid_retriever`                 | `hybrid_retriever` composes the other two                      |
+| `Catalog`        | `postgres_catalog`                                                            |                                                                |
 
 `mock_source` and `mock_embedder` are not an afterthought — they are what make the unit tier of §16 possible.
 
@@ -452,51 +647,51 @@ class Catalog(Protocol):
 
 Mapping to the required `Source → Ingestion → Validation → Normalization → Storage → Feature/Analytics` flow:
 
-| Required stage | Pipeline |
-|---|---|
-| Source, Ingestion | `ingest` (§7.1) |
-| Validation | the Bronze→Silver boundary in `normalize`, plus asset checks (§10) |
-| Normalization | `normalize` (§7.2) |
-| Storage | the layers of §3, written by each pipeline's sink |
-| Feature / Analytics | `model` (§7.3), and `index` (§7.4) for retrieval |
+| Required stage      | Pipeline                                                           |
+| ------------------- | ------------------------------------------------------------------ |
+| Source, Ingestion   | `ingest` (§7.1)                                                    |
+| Validation          | the Bronze→Silver boundary in `normalize`, plus asset checks (§10) |
+| Normalization       | `normalize` (§7.2)                                                 |
+| Storage             | the layers of §3, written by each pipeline's sink                  |
+| Feature / Analytics | `model` (§7.3), and `index` (§7.4) for retrieval                   |
 
 ### 7.1 `ingest` — Source → Bronze
 
-| | |
-|---|---|
-| **Input** | one external source, one time window |
-| **Output** | Parquet files under `bronze/<source>/<dataset>/ingested_date=…/` |
-| **Engine** | dlt |
-| **Partition** | `ingested_date` (daily) — the date we *received* it, not the date it happened |
-| **Idempotency** | append-only + `run_id` in the filename; duplicates are removed in `normalize`, never here |
-| **Failure mode** | fail the partition loudly; never partially commit a window |
+|                  |                                                                                           |
+| ---------------- | ----------------------------------------------------------------------------------------- |
+| **Input**        | one external source, one time window                                                      |
+| **Output**       | Parquet files under `bronze/<source>/<dataset>/ingested_date=…/`                          |
+| **Engine**       | dlt                                                                                       |
+| **Partition**    | `ingested_date` (daily) — the date we _received_ it, not the date it happened             |
+| **Idempotency**  | append-only + `run_id` in the filename; duplicates are removed in `normalize`, never here |
+| **Failure mode** | fail the partition loudly; never partially commit a window                                |
 
 **Why `ingested_date` and not `event_date`:** Bronze mirrors an arrival, and arrivals are the only thing the ingestion step actually knows. Repartitioning by event time is a Silver concern, where late data can be handled deliberately.
 
 **The six required source types:**
 
-| Source type | Adapter | Mechanism |
-|---|---|---|
-| CSV | `file_source` | dlt `readers()` → `read_csv`, or `read_csv_duckdb` for files too large for memory |
-| **Excel** | `excel_source` | **Custom.** dlt ships no Excel reader — `filesystem()` pipes file items into a small transformer using `polars.read_excel` (calamine engine via `fastexcel`). Verified: not covered by dlt built-ins. |
-| JSON / JSONL | `file_source` | dlt `readers()` → `read_jsonl`; nested objects are normalized into child tables automatically |
-| REST API | `api_source` | dlt `rest_api_source` — declarative pagination, auth and incremental cursor |
-| Database | `database_source` | dlt `sql_database` / `sql_table`; use the `pyarrow` backend for stable destination types |
-| Documents | see §7.4 | Docling; binary blobs land in Bronze unaltered, parsing happens in `index` |
+| Source type  | Adapter           | Mechanism                                                                                                                                                                                             |
+| ------------ | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CSV          | `file_source`     | dlt `readers()` → `read_csv`, or `read_csv_duckdb` for files too large for memory                                                                                                                     |
+| **Excel**    | `excel_source`    | **Custom.** dlt ships no Excel reader — `filesystem()` pipes file items into a small transformer using `polars.read_excel` (calamine engine via `fastexcel`). Verified: not covered by dlt built-ins. |
+| JSON / JSONL | `file_source`     | dlt `readers()` → `read_jsonl`; nested objects are normalized into child tables automatically                                                                                                         |
+| REST API     | `api_source`      | dlt `rest_api_source` — declarative pagination, auth and incremental cursor                                                                                                                           |
+| Database     | `database_source` | dlt `sql_database` / `sql_table`; use the `pyarrow` backend for stable destination types                                                                                                              |
+| Documents    | see §7.4          | Docling; binary blobs land in Bronze unaltered, parsing happens in `index`                                                                                                                            |
 
 **Documents land as blobs.** A PDF is copied byte-for-byte into Bronze and parsed later. Parsing is code, code has bugs, and the point of Bronze is that a parser bug costs a reprocess rather than a re-download.
 
-**Incremental loading.** Where the source supports a cursor, `ingest` reads the last watermark from `Catalog`, requests only newer rows, and commits the new watermark *only after* the write succeeds. Full reloads are acceptable while a dataset is small; §17 gives the trigger to stop doing that.
+**Incremental loading.** Where the source supports a cursor, `ingest` reads the last watermark from `Catalog`, requests only newer rows, and commits the new watermark _only after_ the write succeeds. Full reloads are acceptable while a dataset is small; §17 gives the trigger to stop doing that.
 
 ### 7.2 `normalize` — Bronze → Silver
 
-| | |
-|---|---|
-| **Input** | one Bronze partition (or a range, for backfill) |
-| **Output** | `silver/<entity>/event_date=…/` |
-| **Engine** | Polars (lazy), Pandera for the contract |
-| **Partition** | `event_date`, derived from a business timestamp |
-| **Idempotency** | delete-prefix-then-write for the target partition, in that order, one partition at a time |
+|                  |                                                                                                               |
+| ---------------- | ------------------------------------------------------------------------------------------------------------- |
+| **Input**        | one Bronze partition (or a range, for backfill)                                                               |
+| **Output**       | `silver/<entity>/event_date=…/`                                                                               |
+| **Engine**       | Polars (lazy), Pandera for the contract                                                                       |
+| **Partition**    | `event_date`, derived from a business timestamp                                                               |
+| **Idempotency**  | delete-prefix-then-write for the target partition, in that order, one partition at a time                     |
 | **Failure mode** | rows failing the contract go to `quarantine/`; the partition still publishes unless `QualityPolicy` blocks it |
 
 Steps, in order:
@@ -514,14 +709,14 @@ Steps, in order:
 
 ### 7.3 `model` — Silver → Gold
 
-| | |
-|---|---|
-| **Input** | Silver Parquet on object storage |
-| **Output** | `gold` schema tables in Postgres, then `api.v1_*` views (§11) |
-| **Engine** | DuckDB reading Silver via `httpfs`; models defined in dbt (`dbt-duckdb`) |
-| **Partition** | usually none — Gold marts are rebuilt whole while they are small |
-| **Idempotency** | rebuild in DuckDB, then `MERGE` into Postgres on the business key inside one transaction |
-| **Failure mode** | fail before publishing; Postgres keeps the previous good version |
+|                  |                                                                                          |
+| ---------------- | ---------------------------------------------------------------------------------------- |
+| **Input**        | Silver Parquet on object storage                                                         |
+| **Output**       | `gold` schema tables in Postgres, then `api.v1_*` views (§11)                            |
+| **Engine**       | DuckDB reading Silver via `httpfs`; models defined in dbt (`dbt-duckdb`)                 |
+| **Partition**    | usually none — Gold marts are rebuilt whole while they are small                         |
+| **Idempotency**  | rebuild in DuckDB, then `MERGE` into Postgres on the business key inside one transaction |
+| **Failure mode** | fail before publishing; Postgres keeps the previous good version                         |
 
 The publish step is deliberately separate from the transform step. DuckDB does the joins and aggregation over Parquet at object-storage speed; `publish_service` then moves a finished, small result into Postgres where the backend can serve it with an index. One SQL dialect for modelling, one narrow write path to production.
 
@@ -531,14 +726,14 @@ The publish step is deliberately separate from the transform step. DuckDB does t
 
 ### 7.4 `index` — Silver + documents → Index
 
-| | |
-|---|---|
-| **Input** | document blobs from Bronze; text columns from Silver |
-| **Output** | `index.chunk` + `index.embedding` in Postgres |
-| **Engine** | Docling → `Chunker` → `Embedder` → pgvector |
-| **Partition** | by source document |
-| **Idempotency** | chunk id is a content hash; upsert on `(document_id, chunk_index, embedder_model_id)` |
-| **Failure mode** | an unparseable document goes to the DLQ with its error; the run continues |
+|                  |                                                                                       |
+| ---------------- | ------------------------------------------------------------------------------------- |
+| **Input**        | document blobs from Bronze; text columns from Silver                                  |
+| **Output**       | `index.chunk` + `index.embedding` in Postgres                                         |
+| **Engine**       | Docling → `Chunker` → `Embedder` → pgvector                                           |
+| **Partition**    | by source document                                                                    |
+| **Idempotency**  | chunk id is a content hash; upsert on `(document_id, chunk_index, embedder_model_id)` |
+| **Failure mode** | an unparseable document goes to the DLQ with its error; the run continues             |
 
 Steps: resolve parser via `supports()` → parse → chunk → embed in batches → upsert.
 
@@ -548,12 +743,12 @@ Steps: resolve parser via `supports()` → parse → chunk → embed in batches 
 
 ### 7.5 `evaluate` — labeled cases → metrics + report
 
-| | |
-|---|---|
-| **Input** | `evaluation/datasets/*.jsonl`, versioned in git |
-| **Output** | a metrics table + a Markdown report in `evaluation/reports/` |
-| **Engine** | scikit-learn for the metrics, a template for the report |
-| **Idempotency** | pure function of (dataset version, pipeline version, config) |
+|                  |                                                                   |
+| ---------------- | ----------------------------------------------------------------- |
+| **Input**        | `evaluation/datasets/*.jsonl`, versioned in git                   |
+| **Output**       | a metrics table + a Markdown report in `evaluation/reports/`      |
+| **Engine**       | scikit-learn for the metrics, a template for the report           |
+| **Idempotency**  | pure function of (dataset version, pipeline version, config)      |
 | **Failure mode** | a metric below its configured threshold fails the check — visibly |
 
 The harness runs at least two arms — a **baseline** and the **pipeline under test** — over the same cases, and reports precision, recall, F1 and the confusion matrix for each, with `n` stated.
@@ -572,12 +767,12 @@ Three properties make this worth building as a pipeline instead of a notebook:
 
 **Running any pipeline twice produces the same result as running it once.** Everything below exists to make that true, because it is what makes retries, backfills and recovery ordinary instead of frightening.
 
-| Layer | Mechanism | Why this one |
-|---|---|---|
-| Bronze | append-only, `run_id` in the filename | never mutate raw data; duplicates die in Silver |
-| Silver | `delete_prefix(partition)` then write | one partition is the unit of atomicity |
-| Gold | `MERGE` on business key, one transaction | consumers must never see a half-built mart |
-| Index | upsert on content-hash chunk id | re-embedding the same text is a no-op |
+| Layer  | Mechanism                                | Why this one                                    |
+| ------ | ---------------------------------------- | ----------------------------------------------- |
+| Bronze | append-only, `run_id` in the filename    | never mutate raw data; duplicates die in Silver |
+| Silver | `delete_prefix(partition)` then write    | one partition is the unit of atomicity          |
+| Gold   | `MERGE` on business key, one transaction | consumers must never see a half-built mart      |
+| Index  | upsert on content-hash chunk id          | re-embedding the same text is a no-op           |
 
 ### Rules
 
@@ -586,7 +781,7 @@ Three properties make this worth building as a pipeline instead of a notebook:
 3. **Watermarks live in `ops.ingestion_watermark`.** Never on local disk — the disk is not the durable part of the system.
 4. **Commit the watermark after the write succeeds.** In that order, a crash re-reads data; in the other order, a crash loses it. Re-reading is recoverable, losing is not.
 5. **Never overwrite a partition a consumer is reading.** Delete-then-write inside a single partition prefix is acceptable because consumers read whole partitions; a live table overwrite is not.
-6. **Never catch a broad exception and continue.** A bare `except Exception: pass` in a pipeline is silent data loss discovered hours later. Bad *records* are routed to quarantine deliberately; bad *runs* fail.
+6. **Never catch a broad exception and continue.** A bare `except Exception: pass` in a pipeline is silent data loss discovered hours later. Bad _records_ are routed to quarantine deliberately; bad _runs_ fail.
 
 ### Backfill
 
@@ -606,11 +801,11 @@ for partition in range(start, end):
 
 ### One source of truth, two shapes
 
-| Shape | Tool | Used for |
-|---|---|---|
-| Record | Pydantic v2 (`contracts/pydantic/`) | API payloads, config, anything crossing a service boundary |
-| Frame | Pandera (`contracts/pandera/`) | Silver and Gold table schemas |
-| Exported | JSON Schema (`contracts/jsonschema/`) | **generated**, consumed by the .NET backend (§11) |
+| Shape    | Tool                                  | Used for                                                   |
+| -------- | ------------------------------------- | ---------------------------------------------------------- |
+| Record   | Pydantic v2 (`contracts/pydantic/`)   | API payloads, config, anything crossing a service boundary |
+| Frame    | Pandera (`contracts/pandera/`)        | Silver and Gold table schemas                              |
+| Exported | JSON Schema (`contracts/jsonschema/`) | **generated**, consumed by the .NET backend (§11)          |
 
 `contracts/jsonschema/` is generated output committed to git. Committing it means a contract change shows up as a reviewable diff, and the .NET side can regenerate DTOs from a file rather than from a conversation.
 
@@ -622,10 +817,10 @@ version: 2.1.0
 owner: data-engineering
 classification: internal
 fields:
-  order_id:     {type: string,  nullable: false, unique: true}
-  customer_id:  {type: string,  nullable: false, classification: pii}
-  amount:       {type: decimal, nullable: false, min: 0}
-  ordered_at:   {type: timestamp, nullable: false, timezone: utc}
+  order_id: { type: string, nullable: false, unique: true }
+  customer_id: { type: string, nullable: false, classification: pii }
+  amount: { type: decimal, nullable: false, min: 0 }
+  ordered_at: { type: timestamp, nullable: false, timezone: utc }
 semantics:
   grain: one row per order
   amount: gross, in minor units, before discount
@@ -638,14 +833,14 @@ Schema alone does not stop a consumer misreading `amount`. Semantics and SLA are
 
 ### Evolution rules
 
-| Change | Compatibility | Allowed |
-|---|---|---|
-| Add a nullable column | backward | yes, patch version |
-| Add a required column | breaking | new minor, with a default during a grace period |
-| Widen a type (`int32`→`int64`) | backward | yes |
-| Narrow a type | breaking | new major |
-| Rename a column | breaking | add the new one, dual-write, remove after the grace period |
-| Remove a column | breaking | new major, only after consumers confirm |
+| Change                         | Compatibility | Allowed                                                    |
+| ------------------------------ | ------------- | ---------------------------------------------------------- |
+| Add a nullable column          | backward      | yes, patch version                                         |
+| Add a required column          | breaking      | new minor, with a default during a grace period            |
+| Widen a type (`int32`→`int64`) | backward      | yes                                                        |
+| Narrow a type                  | breaking      | new major                                                  |
+| Rename a column                | breaking      | add the new one, dual-write, remove after the grace period |
+| Remove a column                | breaking      | new major, only after consumers confirm                    |
 
 **Additive by default. Semver. A breaking change is a new version with a grace period, never an edit in place.**
 
@@ -673,18 +868,18 @@ Bronze ──▶ [structural checks] ──▶ Silver staging ──▶ [full su
 
 ### Where each check runs
 
-| Layer | Checks | Cost |
-|---|---|---|
-| Bronze | is it readable, non-empty, roughly the expected volume, did the schema drift | cheap, every run |
-| Silver | the full contract — types, nullability, uniqueness, ranges, referential integrity | the main suite |
-| Gold | dbt tests — `unique`, `not_null`, `relationships`, `accepted_values`, plus business assertions | on rebuild |
-| Index | chunk count per document non-zero, embedding dimensions match `Embedder.dimensions` | on rebuild |
+| Layer  | Checks                                                                                         | Cost             |
+| ------ | ---------------------------------------------------------------------------------------------- | ---------------- |
+| Bronze | is it readable, non-empty, roughly the expected volume, did the schema drift                   | cheap, every run |
+| Silver | the full contract — types, nullability, uniqueness, ranges, referential integrity              | the main suite   |
+| Gold   | dbt tests — `unique`, `not_null`, `relationships`, `accepted_values`, plus business assertions | on rebuild       |
+| Index  | chunk count per document non-zero, embedding dimensions match `Embedder.dimensions`            | on rebuild       |
 
 **Running checks only on Gold is the classic mistake**: by the time Gold fails, everything upstream is already contaminated and you cannot tell how far back.
 
 ### QualityPolicy — a domain decision
 
-Validation produces a report. What to *do* about the report is a policy, and it belongs in the domain where it can be tested without a database.
+Validation produces a report. What to _do_ about the report is a policy, and it belongs in the domain where it can be tested without a database.
 
 ```python
 class QualityPolicy(Protocol):
@@ -694,13 +889,13 @@ class QualityPolicy(Protocol):
 
 Default posture:
 
-| Situation | Decision |
-|---|---|
-| No violations | `PUBLISH` |
-| Row-level violations under the threshold | `QUARANTINE_AND_PUBLISH` |
-| Row-level violations over the threshold | `BLOCK` — something changed upstream |
-| A schema-level violation (missing required column) | `BLOCK` |
-| A freshness miss with valid data | `PUBLISH_WITH_WARNING` |
+| Situation                                          | Decision                             |
+| -------------------------------------------------- | ------------------------------------ |
+| No violations                                      | `PUBLISH`                            |
+| Row-level violations under the threshold           | `QUARANTINE_AND_PUBLISH`             |
+| Row-level violations over the threshold            | `BLOCK` — something changed upstream |
+| A schema-level violation (missing required column) | `BLOCK`                              |
+| A freshness miss with valid data                   | `PUBLISH_WITH_WARNING`               |
 
 **Thresholds live in `Settings`, never in code.** A hard-coded `if bad_rows > 100` breaks the first week real volume grows past it, and it breaks by blocking a healthy pipeline.
 
@@ -731,15 +926,15 @@ api.v1_customer_overview   ← THE CONTRACT. .NET reads only this.
 api.v1_order_daily         ← additive changes only
 ```
 
-| Rule | Reason |
-|---|---|
-| The backend reads only the `api` schema | table refactors stop being cross-team events |
-| `api` views are additive within a major version | a new column never breaks a consumer |
-| A breaking change ships as `api.v2_*` alongside `v1_*` | the backend migrates on its own schedule |
-| `v1_*` is dropped only after the backend confirms | coordination happens once, at removal |
-| The backend's DB role has `SELECT` on `api` only | least privilege, and it makes the boundary real rather than advisory |
+| Rule                                                   | Reason                                                               |
+| ------------------------------------------------------ | -------------------------------------------------------------------- |
+| The backend reads only the `api` schema                | table refactors stop being cross-team events                         |
+| `api` views are additive within a major version        | a new column never breaks a consumer                                 |
+| A breaking change ships as `api.v2_*` alongside `v1_*` | the backend migrates on its own schedule                             |
+| `v1_*` is dropped only after the backend confirms      | coordination happens once, at removal                                |
+| The backend's DB role has `SELECT` on `api` only       | least privilege, and it makes the boundary real rather than advisory |
 
-The last row is what makes this hold. A convention the backend *could* bypass eventually gets bypassed at 2am; a permission it *cannot* bypass stays a boundary.
+The last row is what makes this hold. A convention the backend _could_ bypass eventually gets bypassed at 2am; a permission it _cannot_ bypass stays a boundary.
 
 ### Keeping DTOs in sync
 
@@ -747,12 +942,12 @@ The last row is what makes this hold. A convention the backend *could* bypass ev
 
 ### Postgres schemas
 
-| Schema | Contents | Backend access |
-|---|---|---|
-| `gold` | published marts | none |
-| `index` | chunks, embeddings | none |
-| `api` | versioned views | `SELECT` |
-| `ops` | watermarks, run log, quality violations | none |
+| Schema  | Contents                                | Backend access |
+| ------- | --------------------------------------- | -------------- |
+| `gold`  | published marts                         | none           |
+| `index` | chunks, embeddings                      | none           |
+| `api`   | versioned views                         | `SELECT`       |
+| `ops`   | watermarks, run log, quality violations | none           |
 
 Silver deliberately does not appear: it stays in object storage. Postgres holds only what is served or operational, which keeps the serving database small and fast.
 
@@ -846,12 +1041,12 @@ API keys, connection strings, full record payloads, or any column classified `pi
 
 ### The four detectors
 
-| Detector | Fires when | Severity |
-|---|---|---|
-| Flow interruption | a dataset has had no new partition for longer than its SLA | page |
-| Volume skew | row count deviates more than three sigma from its trailing mean | warn, page on repeat |
-| Freshness / SLA miss | the contract's freshness budget is exceeded | page if a consumer has an SLA |
-| Quality-rate drift | the rejected-row ratio rises materially against its baseline | warn |
+| Detector             | Fires when                                                      | Severity                      |
+| -------------------- | --------------------------------------------------------------- | ----------------------------- |
+| Flow interruption    | a dataset has had no new partition for longer than its SLA      | page                          |
+| Volume skew          | row count deviates more than three sigma from its trailing mean | warn, page on repeat          |
+| Freshness / SLA miss | the contract's freshness budget is exceeded                     | page if a consumer has an SLA |
+| Quality-rate drift   | the rejected-row ratio rises materially against its baseline    | warn                          |
 
 **Never page on a warning**, and **never ship an alert without a runbook link**. Both produce the same outcome: alerts that get ignored, including the real ones.
 
@@ -869,17 +1064,17 @@ Dagster's asset graph is the lineage graph — it is derived from the code, so i
 
 ## 14. Security and governance
 
-| Concern | Rule |
-|---|---|
-| Classification | every field carries one of `public` / `internal` / `confidential` / `pii`, set in the contract |
-| PII tagging | applied in `normalize` at landing (§7.2 step 5), never retrofitted |
-| Secrets | environment variables locally, a secret manager in cloud; never in git, never in logs |
-| DB roles | `data_writer` (pipelines: write `gold`/`index`/`ops`), `backend_reader` (`SELECT` on `api` only), `analyst_reader` (read `gold`, PII columns masked) |
-| Object storage | per-bucket credentials; the pipeline role cannot delete Bronze |
-| Production data on laptops | prohibited — the single most common avoidable PII leak. Use `mock_source` and generated fixtures |
-| Test data | synthetic, or a masked sample; never a production dump, and never in CI logs |
-| Retention | Bronze per policy, Silver aligned to Bronze, quarantine 90 days, Index rebuildable so retention is irrelevant |
-| Right to erasure | a keyed delete against Silver plus a Gold rebuild plus an Index rebuild; Bronze handled per its retention policy |
+| Concern                    | Rule                                                                                                                                                 |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Classification             | every field carries one of `public` / `internal` / `confidential` / `pii`, set in the contract                                                       |
+| PII tagging                | applied in `normalize` at landing (§7.2 step 5), never retrofitted                                                                                   |
+| Secrets                    | environment variables locally, a secret manager in cloud; never in git, never in logs                                                                |
+| DB roles                   | `data_writer` (pipelines: write `gold`/`index`/`ops`), `backend_reader` (`SELECT` on `api` only), `analyst_reader` (read `gold`, PII columns masked) |
+| Object storage             | per-bucket credentials; the pipeline role cannot delete Bronze                                                                                       |
+| Production data on laptops | prohibited — the single most common avoidable PII leak. Use `mock_source` and generated fixtures                                                     |
+| Test data                  | synthetic, or a masked sample; never a production dump, and never in CI logs                                                                         |
+| Retention                  | Bronze per policy, Silver aligned to Bronze, quarantine 90 days, Index rebuildable so retention is irrelevant                                        |
+| Right to erasure           | a keyed delete against Silver plus a Gold rebuild plus an Index rebuild; Bronze handled per its retention policy                                     |
 
 **Every dataset has exactly one owner**, recorded in its contract. A dataset owned by everyone is maintained by no one and becomes the on-call's problem eventually.
 
@@ -906,14 +1101,14 @@ s3://bi-data-prod/silver/orders/event_date=2026-08-11/part-a1b2c3-0.parquet
 
 ### Postgres
 
-| Object | Pattern | Example |
-|---|---|---|
-| Schemas | `gold`, `index`, `api`, `ops` | |
-| Dimension | `dim_<entity>` | `gold.dim_customer` |
-| Fact | `fct_<event>` | `gold.fct_order` |
-| Serving view | `api.v<major>_<name>` | `api.v1_order_daily` |
-| Index tables | `index.chunk`, `index.embedding` | |
-| Ops tables | `ops.ingestion_watermark`, `ops.run_log`, `ops.quality_violations` | |
+| Object       | Pattern                                                            | Example              |
+| ------------ | ------------------------------------------------------------------ | -------------------- |
+| Schemas      | `gold`, `index`, `api`, `ops`                                      |                      |
+| Dimension    | `dim_<entity>`                                                     | `gold.dim_customer`  |
+| Fact         | `fct_<event>`                                                      | `gold.fct_order`     |
+| Serving view | `api.v<major>_<name>`                                              | `api.v1_order_daily` |
+| Index tables | `index.chunk`, `index.embedding`                                   |                      |
+| Ops tables   | `ops.ingestion_watermark`, `ops.run_log`, `ops.quality_violations` |                      |
 
 ### Dagster asset keys
 
@@ -929,11 +1124,11 @@ The asset key prefix is the layer, so the Dagster UI groups by layer with no ext
 
 ### dbt models
 
-| Stage | Pattern | Example |
-|---|---|---|
-| Staging | `stg_<source>__<entity>` | `stg_erp__orders` |
-| Intermediate | `int_<entity>__<verb>` | `int_orders__enriched` |
-| Mart | `dim_<entity>` / `fct_<event>` | `fct_order` |
+| Stage        | Pattern                        | Example                |
+| ------------ | ------------------------------ | ---------------------- |
+| Staging      | `stg_<source>__<entity>`       | `stg_erp__orders`      |
+| Intermediate | `int_<entity>__<verb>`         | `int_orders__enriched` |
+| Mart         | `dim_<entity>` / `fct_<event>` | `fct_order`            |
 
 Double underscore separates the source from the entity; single underscores are word separators within each.
 
@@ -958,12 +1153,12 @@ tests/
 └── (evaluation/)  # lives in evaluation/, run as an asset -- see §7.5
 ```
 
-| Tier | What it proves | Rule |
-|---|---|---|
-| Unit | policies, transformers, contracts, RRF fusion are correct | if it needs a container, it is not a unit test |
-| Integration | each adapter really works against its real dependency | real dependencies, not mocks — mocked drivers hide driver bugs |
-| E2E | the layers compose, on a tiny synthetic dataset | must run in CI in under a few minutes |
-| Evaluation | quality is above threshold | `quality >= threshold`, not `expected == actual` |
+| Tier        | What it proves                                            | Rule                                                           |
+| ----------- | --------------------------------------------------------- | -------------------------------------------------------------- |
+| Unit        | policies, transformers, contracts, RRF fusion are correct | if it needs a container, it is not a unit test                 |
+| Integration | each adapter really works against its real dependency     | real dependencies, not mocks — mocked drivers hide driver bugs |
+| E2E         | the layers compose, on a tiny synthetic dataset           | must run in CI in under a few minutes                          |
+| Evaluation  | quality is above threshold                                | `quality >= threshold`, not `expected == actual`               |
 
 **The fourth tier is not optional and it is not a notebook.** Traditional tests assert equality; a retrieval or extraction pipeline has no single correct output, only a measurable quality level. `evaluation/` is therefore a component of the system with the same standing as `application/` — the same argument the agent standard makes in §15.
 
@@ -975,17 +1170,17 @@ tests/
 
 Every row here is a real ceiling with a real successor. **The trigger column exists so nobody upgrades early** — each of these upgrades costs operational complexity that is only worth paying once the ceiling is actually hit.
 
-| Today | Ceiling / trigger | Then |
-|---|---|---|
-| Plain Parquet partitions | concurrent writers, or a genuine need for row-level `MERGE` / time travel | Apache Iceberg (`pyiceberg` + a REST catalog) |
-| DuckDB single-node | a transform no longer fits one machine, or exceeds the time budget on a large instance | Distributed engine, or push the transform into a warehouse |
-| Batch ingestion | a consumer's value genuinely depends on sub-minute freshness | Postgres logical replication first; Debezium + a log broker only if that is insufficient |
-| pgvector | vector count or QPS degrades recall or latency below target | A dedicated vector store — accepting a second store to keep in sync |
-| Postgres FTS + trigram | Vietnamese lexical retrieval quality becomes the binding constraint (§12.2) | A search engine with a real Vietnamese analyzer |
-| Full reload | reload time or source load becomes a problem | Incremental with a watermark, then CDC |
-| `dagster dev` | multiple concurrent users, or scheduled runs must survive a laptop closing | Dagster deployed as a container, then on K8s |
-| Local `ops` tables | lineage needed across teams and tools | OpenLineage emission into a catalog |
-| Postgres as the analytics store | analytical queries start competing with serving queries | A dedicated columnar warehouse; Postgres keeps only `api` |
+| Today                           | Ceiling / trigger                                                                      | Then                                                                                     |
+| ------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Plain Parquet partitions        | concurrent writers, or a genuine need for row-level `MERGE` / time travel              | Apache Iceberg (`pyiceberg` + a REST catalog)                                            |
+| DuckDB single-node              | a transform no longer fits one machine, or exceeds the time budget on a large instance | Distributed engine, or push the transform into a warehouse                               |
+| Batch ingestion                 | a consumer's value genuinely depends on sub-minute freshness                           | Postgres logical replication first; Debezium + a log broker only if that is insufficient |
+| pgvector                        | vector count or QPS degrades recall or latency below target                            | A dedicated vector store — accepting a second store to keep in sync                      |
+| Postgres FTS + trigram          | Vietnamese lexical retrieval quality becomes the binding constraint (§12.2)            | A search engine with a real Vietnamese analyzer                                          |
+| Full reload                     | reload time or source load becomes a problem                                           | Incremental with a watermark, then CDC                                                   |
+| `dagster dev`                   | multiple concurrent users, or scheduled runs must survive a laptop closing             | Dagster deployed as a container, then on K8s                                             |
+| Local `ops` tables              | lineage needed across teams and tools                                                  | OpenLineage emission into a catalog                                                      |
+| Postgres as the analytics store | analytical queries start competing with serving queries                                | A dedicated columnar warehouse; Postgres keeps only `api`                                |
 
 **Record why, when you do it.** Each of these is an architecture decision worth a short ADR in `docs/decisions/`. The architecture in this document is an engineering hypothesis, not a permanent truth — and the reasoning behind a change is more valuable later than the change itself.
 
@@ -1067,7 +1262,7 @@ Data correctness:
 
 Quality and contracts:
 
-- [ ] Checks run at Bronze, Silver *and* Gold — not only Gold (§10)
+- [ ] Checks run at Bronze, Silver _and_ Gold — not only Gold (§10)
 - [ ] Bad rows are quarantined with their violation, never dropped (§10)
 - [ ] Thresholds are configuration (§10)
 - [ ] No broad `except` that swallows a failure and continues (§8)
