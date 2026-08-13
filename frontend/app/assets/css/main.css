@@ -1,0 +1,49 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+@theme static {
+  /* Rule 1: Primary Indigo Palette (#6366f1) */
+  --ui-primary: var(--color-indigo-600);
+  --ui-bg: #f8fafc;
+  --ui-surface: #ffffff;
+  --ui-border: #e2e8f0;
+  --font-sans: 'Inter', 'Public Sans', sans-serif;
+
+  /* --color-green-50: #EFFDF5;
+  --color-green-100: #D9FBE8;
+  --color-green-200: #B3F5D1;
+  --color-green-300: #75EDAE;
+  --color-green-400: #00DC82;
+  --color-green-500: #00C16A;
+  --color-green-600: #00A155;
+  --color-green-700: #007F45;
+  --color-green-800: #016538;
+  --color-green-900: #0A5331;
+  --color-green-950: #052E16; */
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  .dark {
+    --ui-bg: var(--color-zinc-950);
+    --ui-surface: var(--color-zinc-900);
+    --ui-border: #27272a;
+  }
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply antialiased;
+  background-color: var(--ui-bg);
+  color: var(--color-zinc-900);
+}
+
+.dark body {
+  color: var(--color-zinc-100);
+}
