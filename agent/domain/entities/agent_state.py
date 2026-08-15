@@ -13,8 +13,8 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any
 
-from agent.domain.entities.context import Context
-from agent.domain.entities.task import Task
+from domain.entities.context import Context
+from domain.entities.task import Task
 
 
 class StepStatus(str, Enum):

@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from agent.domain.ports.llm import LLMRequest, LLMResponse
-from agent.domain.value_objects.token_usage import TokenUsage
+from domain.ports.llm import LLMRequest, LLMResponse
+from domain.value_objects.token_usage import TokenUsage
 
 
 @dataclass

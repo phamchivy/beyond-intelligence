@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from agent.domain.entities.decision import Decision
+from domain.entities.decision import Decision
 
 
 class PolicyOutcome(str, Enum):

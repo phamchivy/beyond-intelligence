@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import pytest
 
-from agent.domain.policies.retry_policy import NonRetryableError, RetryableError
-from agent.domain.ports.llm import LLM, LLMMessage, LLMRequest, LLMResponse, MessageRole
-from agent.infrastructure.llm.mock_llm import MockLLM
+from domain.policies.retry_policy import NonRetryableError, RetryableError
+from domain.ports.llm import LLM, LLMMessage, LLMRequest, LLMResponse, MessageRole
+from infrastructure.llm.mock_llm import MockLLM
 
 
 def _simple_request(text: str = "hello") -> LLMRequest:

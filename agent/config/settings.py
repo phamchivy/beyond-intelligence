@@ -17,15 +17,26 @@ Nguyen tac (Twelve-Factor App + quy tac da thong nhat trong du an):
 
 TUYET DOI KHONG hardcode gia tri cau hinh o BAT KY noi nao khac trong
 `agent/` (ten model, threshold, temperature, timeout, so lan retry...).
-Moi noi can dung gia tri nay phai `from agent.config.settings import settings`.
+Moi noi can dung gia tri nay phai `from config.settings import settings`.
 
 Thu tu uu tien khi nap gia tri (theo pydantic-settings):
   1. Bien moi truong that (os.environ) -- uu tien cao nhat, dung cho
      production / CI-CD (khong dung file .env tren server that).
-  2. File `.env` o thu muc goc du an -- CHI dung cho local dev, khong
+  2. File `.env` o thu muc goc `agent/` -- CHI dung cho local dev, khong
      commit (`.env` phai nam trong .gitignore). Xem `.env.example`
      de biet cac bien can khai bao.
   3. Gia tri default khai bao trong cac class ben duoi.
+
+QUY TAC KE THUA SETTINGS (ap dung cho moi Settings class them sau nay):
+  - MOI class Settings con PHAI ke thua tu `_BaseAppSettings` ben duoi,
+    KHONG ke thua truc tiep tu `BaseSettings` cua pydantic_settings.
+  - `_BaseAppSettings` la noi DUY NHAT khai bao `env_file`, encoding,
+    va `extra="ignore"`. Class con chi khai bao them `env_prefix` rieng
+    cua minh -- pydantic tu dong merge model_config qua ke thua (da
+    kiem chung: cac key khong trung se duoc gop, key trung se lay gia
+    tri cua class con).
+  - Neu sau nay can doi vi tri file .env, hoac doi encoding, CHI sua
+    o `_BaseAppSettings`, KHONG sua tung class con.
 """
 from __future__ import annotations
 
@@ -40,8 +51,25 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # chuoi ".env" tuong doi -- vi ".env" tuong doi phu thuoc vao thu muc
 # dang dung khi chay lenh (cwd), se gay loi kho hieu neu chay pytest/
 # uvicorn tu mot thu muc khac (vd: tu thu muc goc du an beyond-intelligence
-# thay vi tu agent/).
+# thay vi tu agent/, du quy uoc du an la luon chay tu agent/).
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+
+
+class _BaseAppSettings(BaseSettings):
+    """
+    Base chung cho MOI Settings class trong du an.
+
+    Tap trung env_file/encoding/extra tai MOT noi duy nhat -- moi
+    Settings class con (LLMSettings, DecisionPolicySettings...) ke
+    thua tu day thay vi tu BaseSettings truc tiep, va CHI can khai
+    them them env_prefix rieng cua minh.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 class Environment(str, Enum):
@@ -64,19 +92,31 @@ class LogLevel(str, Enum):
     ERROR = "ERROR"
 
 
-class LLMSettings(BaseSettings):
+class LLMSettings(_BaseAppSettings):
     """
     Cau hinh cho LLM provider dang dung -- doc boi infrastructure/llm/*
     (GeminiProvider, MockLLM...). KHONG doc truc tiep boi domain/application.
     """
 
-    model_config = SettingsConfigDict(env_prefix="LLM_", env_file=_ENV_FILE, env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="LLM_")
 
     provider: LLMProvider = LLMProvider.GEMINI
-    model: str = "gemini-2.5-flash"  # gemini-2.0-flash da bi Google khai tu 1/6/2026
+    # gemini-2.0-flash da bi Google khai tu 1/6/2026. Dong 3.x hien tai
+    # (8/2026): gemini-3.6-flash (GA, mac dinh -- nhanh & re), 3.5-flash-lite
+    # (GA, re nhat), gemini-3.1-pro-preview (preview, reasoning sau hon
+    # nhung Google co the doi model dang sau ten nay bat ky luc nao).
+    model: str = "gemini-3.6-flash"
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     max_tokens: int = Field(default=2048, gt=0)
     timeout_seconds: float = Field(default=30.0, gt=0)
+    # Dong model Gemini 3.x mac dinh bat "thinking" (suy luan an) truoc
+    # khi tra loi, tieu ton token vao max_tokens -- neu max_tokens nho
+    # (vd: cac buoc pipeline can tra loi ngan gon) co the tieu het vao
+    # thinking, khong con token cho cau tra loi that (finish_reason=
+    # MAX_TOKENS, content rong). "low" la muc an toan mac dinh cho agent
+    # can output nhanh/on dinh; doi "high" cho buoc can reasoning sau
+    # (vd: Generate Strategy) qua env LLM_THINKING_LEVEL.
+    thinking_level: str = "low"
 
     # Secret -- luon la SecretStr, luon tu env, khong co default that.
     gemini_api_key: SecretStr | None = Field(default=None)
@@ -104,10 +144,10 @@ class LLMSettings(BaseSettings):
         return key
 
 
-class DecisionPolicySettings(BaseSettings):
+class DecisionPolicySettings(_BaseAppSettings):
     """Cau hinh nguong cho DecisionPolicy (domain/policies/decision_policy.py)."""
 
-    model_config = SettingsConfigDict(env_prefix="DECISION_", env_file=_ENV_FILE, env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="DECISION_")
 
     auto_execute_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
     reject_threshold: float = Field(default=0.3, ge=0.0, le=1.0)
@@ -124,10 +164,10 @@ class DecisionPolicySettings(BaseSettings):
         return v
 
 
-class RetryPolicySettings(BaseSettings):
+class RetryPolicySettings(_BaseAppSettings):
     """Cau hinh cho RetryPolicy (domain/policies/retry_policy.py)."""
 
-    model_config = SettingsConfigDict(env_prefix="RETRY_", env_file=_ENV_FILE, env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="RETRY_")
 
     max_attempts: int = Field(default=3, ge=1, le=10)
     base_delay_seconds: float = Field(default=1.0, gt=0)
@@ -135,18 +175,18 @@ class RetryPolicySettings(BaseSettings):
     backoff_multiplier: float = Field(default=2.0, ge=1.0)
 
 
-class ToolPolicySettings(BaseSettings):
+class ToolPolicySettings(_BaseAppSettings):
     """Cau hinh mac dinh cho ToolPolicy (domain/policies/tool_policy.py)."""
 
-    model_config = SettingsConfigDict(env_prefix="TOOL_", env_file=_ENV_FILE, env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="TOOL_")
 
     auto_deny_unknown_tools: bool = True
 
 
-class ObservabilitySettings(BaseSettings):
+class ObservabilitySettings(_BaseAppSettings):
     """Cau hinh logging/tracing -- doc boi observability/*."""
 
-    model_config = SettingsConfigDict(env_prefix="OBSERVABILITY_", env_file=_ENV_FILE, env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="OBSERVABILITY_")
 
     log_level: LogLevel = LogLevel.INFO
     log_prompts: bool = False  # mac dinh KHONG log full prompt -- tranh ro du lieu nhay cam
@@ -154,20 +194,17 @@ class ObservabilitySettings(BaseSettings):
     tracing_endpoint: str | None = None
 
 
-class Settings(BaseSettings):
+class Settings(_BaseAppSettings):
     """
     Nguon cau hinh goc, gop tat ca nhom con o tren.
+
+    Ke thua tu _BaseAppSettings giong het cac class con khac -- khong
+    can khai bao lai env_file/encoding/extra o day nua.
 
     Import instance `settings` da khoi tao san o cuoi file nay va dung
     lai; KHONG tu goi `Settings()` o noi khac trong code (se doc lai
     .env nhieu lan, co the khong dong bo giua cac module).
     """
-
-    model_config = SettingsConfigDict(
-        env_file=_ENV_FILE,
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
 
     app_name: str = "beyond-intelligence-agent"
     environment: Environment = Environment.DEVELOPMENT
@@ -186,6 +223,6 @@ class Settings(BaseSettings):
         return self.environment == Environment.PRODUCTION
 
 
-# Instance duy nhat, dung chung cho toan bo agent/. Cac module khac
-# import: `from agent.config.settings import settings`
+# Instance duy nhat, dung chung cho toan bo agent/.
+# Import: `from config.settings import settings`
 settings = Settings()

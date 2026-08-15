@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
-from agent.domain.value_objects.token_usage import TokenUsage
+from domain.value_objects.token_usage import TokenUsage
 
 
 class MessageRole(str, Enum):

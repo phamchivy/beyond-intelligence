@@ -19,9 +19,9 @@ from __future__ import annotations
 
 import pytest
 
-from agent.config.settings import LLMProvider, LLMSettings
-from agent.domain.ports.llm import LLMMessage, LLMRequest, MessageRole
-from agent.infrastructure.llm.gemini_provider import GeminiProvider
+from config.settings import LLMProvider, LLMSettings
+from domain.ports.llm import LLMMessage, LLMRequest, MessageRole
+from infrastructure.llm.gemini_provider import GeminiProvider
 
 pytestmark = pytest.mark.integration
 

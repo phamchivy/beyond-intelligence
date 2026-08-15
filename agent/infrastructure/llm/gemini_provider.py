@@ -10,7 +10,7 @@ Domain va Application khong biet Gemini ton tai -- chi biet Protocol LLM
     Gemini GenerateContentResponse  --dich-->  LLMResponse (chuan hoa)
 
 Khong doc gia tri cau hinh (model, temperature, api key...) tu bat ky
-noi nao khac ngoai `agent.config.settings` -- KHONG hardcode.
+noi nao khac ngoai `config.settings` -- KHONG hardcode.
 
 Retry KHONG duoc tu viet vong lap o day (xem domain/policies/retry_policy.py
 -- ly do vi sao khong de tung adapter tu retry rieng). GeminiProvider chi
@@ -24,9 +24,9 @@ from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 
-from agent.config.settings import LLMSettings
-from agent.domain.policies.retry_policy import NonRetryableError, RetryableError
-from agent.domain.ports.llm import (
+from config.settings import LLMSettings
+from domain.policies.retry_policy import NonRetryableError, RetryableError
+from domain.ports.llm import (
     LLMMessage,
     LLMRequest,
     LLMResponse,
@@ -34,7 +34,7 @@ from agent.domain.ports.llm import (
     ToolCall,
     ToolDefinition,
 )
-from agent.domain.value_objects.token_usage import TokenUsage
+from domain.value_objects.token_usage import TokenUsage
 
 # Gemini dung role "model" thay vi "assistant" -- day la noi DUY NHAT
 # trong code biet den su khac biet nay, khong de lo ra domain/application.
@@ -70,6 +70,9 @@ class GeminiProvider:
             temperature=request.temperature,
             max_output_tokens=request.max_tokens or self._config.max_tokens,
             tools=self._to_gemini_tools(request.tools) if request.tools else None,
+            thinking_config=genai_types.ThinkingConfig(
+                thinking_level=self._config.thinking_level
+            ),
         )
 
         try:

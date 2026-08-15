@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from agent.domain.entities.context import RetrievedDocument
+from domain.entities.context import RetrievedDocument
 
 
 @runtime_checkable
