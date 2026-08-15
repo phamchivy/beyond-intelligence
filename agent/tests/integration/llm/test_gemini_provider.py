@@ -56,7 +56,7 @@ class TestGeminiProviderReal:
                 LLMMessage(role=MessageRole.SYSTEM, content="Tra loi that ngan gon, duoi 10 tu."),
                 LLMMessage(role=MessageRole.USER, content="Viet Nam co bao nhieu tinh thanh?"),
             ),
-            max_tokens=50,
+            max_tokens=200,
         )
 
         response = await gemini_provider.generate(request)
