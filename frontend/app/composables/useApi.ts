@@ -2,7 +2,7 @@
 export const useApi = () => {
   const config = useRuntimeConfig()
   // Trạng thái Demo Mode toàn cục (dùng useState)
-  const isDemoMode = useState<boolean>('demo_mode', () => false)
+  const isDemoMode = useState<boolean>('demo_mode', () => true)
 
   /**
    * Hàm gọi API chung
