@@ -1,5 +1,6 @@
 using FastEndpoints;
 using FastEndpoints.Swagger;
+using Microsoft.AspNetCore.Http.Features;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,6 +12,16 @@ builder.Services.SwaggerDocument(o =>
         s.Title = "Hackathon AI Simulation API";
         s.Version = "v1";
     };
+});
+
+// Open upload limit to 150MB for Kestrel Server
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = 150 * 1024 * 1024; // 150 MB
+});
+builder.Services.Configure<FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = 150 * 1024 * 1024;
 });
 
 // Add CORS policy to allow requests from the frontend
@@ -27,6 +38,7 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 app.UseCors("AllowFrontend"); //trigger the CORS
+app.UseStaticFiles();
 app.UseFastEndpoints();
 app.UseSwaggerGen();
 
