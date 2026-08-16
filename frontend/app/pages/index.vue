@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { EChartsOption } from 'echarts'
 
-const isDemoMode = useState<boolean>('isDemoMode')
+const { isDemoMode } = useEngineApi()
 
 // Mock Overview Data
 const kpis = ref([

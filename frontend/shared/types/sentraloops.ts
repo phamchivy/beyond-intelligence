@@ -63,3 +63,18 @@ export interface VideoScanDetail {
     resolution: string
   }
 }
+
+export interface VideoUploadPayload {
+  videoFile: File
+  productTitle: string
+  productCategory: string
+  targetMarket: string
+}
+
+export interface VideoUploadResponse {
+  analysisId: string
+  videoUrl: string
+  fileSizeBytes: number
+  status: 'PROCESSING' | 'COMPLETED' | 'FAILED' | string
+  message: string
+}

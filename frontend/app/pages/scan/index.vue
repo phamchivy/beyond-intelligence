@@ -1,41 +1,84 @@
 <script setup lang="ts">
+const { uploadVideo } = useEngineApi()
+const toast = useToast()
+
+const uploadedFile = ref<File | null>(null)
 const isUploading = ref(false)
 const uploadProgress = ref(0)
 
 const formState = reactive({
-  category: 'ecommerce',
-  targetPlatform: 'tiktok',
-  caption: 'Mẫu áo chống nắng thế hệ mới hè 2026 - Giảm ngay 30% hôm nay! #sale #fashion',
-  autoMitigate: true
+  productTitle: 'Mẫu áo chống nắng thế hệ mới hè 2026 - Giảm ngay 30% hôm nay! #sale #fashion',
+  productCategory: 'ecommerce',
+  targetMarket: 'VN'
 })
 
 const categories = [
   { label: 'E-Commerce / Bán lẻ', value: 'ecommerce' },
   { label: 'Công nghệ & Điện tử', value: 'tech' },
   { label: 'Thời trang & Làm đẹp', value: 'fashion' },
-  { label: 'F&B Thực phẩm', value: 'fnb' }
+  { label: 'F&B Thực phẩm', value: 'fnb' },
+  { label: 'Sức khỏe & Mỹ phẩm', value: 'beauty_health' }
 ]
 
-const platforms = [
-  { label: 'TikTok Ads / Shop', value: 'tiktok' },
-  { label: 'Meta Reels & Stories', value: 'meta' },
-  { label: 'YouTube Shorts', value: 'youtube' }
+const markets = [
+  { label: 'Việt Nam (TikTok Shop / Shopee Video)', value: 'VN' },
+  { label: 'Hoa Kỳ (Meta Reels / TikTok US)', value: 'US' },
+  { label: 'Đông Nam Á - SEA', value: 'SEA' },
+  { label: 'Toàn cầu (Global Shorts)', value: 'GLOBAL' }
 ]
 
-const startScan = async () => {
-  isUploading.value = true
-  uploadProgress.value = 15
+const handleSubmit = async () => {
+  if (!uploadedFile.value) {
+    toast.add({
+      title: 'Chưa chọn file',
+      description: 'Vui lòng chọn video cần quét.',
+      color: 'warning'
+    })
+    return
+  }
 
-  // Mô phỏng tiến trình tải lên và khởi chạy Agent
-  const interval = setInterval(() => {
-    uploadProgress.value += 20
-    if (uploadProgress.value >= 100) {
-      clearInterval(interval)
-      setTimeout(() => {
-        navigateTo('/scan/VID-9021')
-      }, 500)
+  try {
+    isUploading.value = true
+    uploadProgress.value = 30
+
+    const progressTimer = setInterval(() => {
+      if (uploadProgress.value < 90) {
+        uploadProgress.value += 15
+      }
+    }, 200)
+
+    const payload: VideoUploadPayload = {
+      videoFile: uploadedFile.value,
+      productTitle: formState.productTitle,
+      productCategory: formState.productCategory,
+      targetMarket: formState.targetMarket
     }
-  }, 400)
+
+    // Nhận response theo schema thực tế
+    const response = await uploadVideo(payload)
+
+    clearInterval(progressTimer)
+    uploadProgress.value = 100
+
+    toast.add({
+      title: 'Tải lên thành công',
+      description: response.message || `Mã phân tích: ${response.analysisId}`,
+      color: 'success'
+    })
+
+    // Điều hướng theo analysisId
+    setTimeout(() => {
+      navigateTo(`/scan/${response.analysisId}`)
+    }, 400)
+  } catch (error: any) {
+    toast.add({
+      title: 'Lỗi tải lên',
+      description: error?.message || 'Không thể kết nối máy chủ.',
+      color: 'error'
+    })
+  } finally {
+    isUploading.value = false
+  }
 }
 </script>
 
@@ -44,70 +87,109 @@ const startScan = async () => {
     <div>
       <h1 class="text-2xl font-bold text-highlighted tracking-tight">Video Scanning Studio</h1>
       <p class="text-sm text-muted mt-1">
-        Tải lên video để quét tự động các vi phạm chính sách kiểm duyệt và nhận đề xuất tăng trưởng CVR.
+        Tải video lên hệ thống phân tích Agentic AI để nhận diện vi phạm kiểm duyệt và tối ưu hóa tỷ lệ chuyển đổi.
       </p>
     </div>
 
     <UCard>
-      <form class="flex flex-col gap-5" @submit.prevent="startScan">
-        <!-- Drag & Drop Upload Box -->
-        <div class="border-2 border-dashed border-muted hover:border-primary/60 rounded-xl p-8 flex flex-col items-center justify-center gap-3 bg-muted/10 transition-colors cursor-pointer">
-          <div class="size-12 rounded-full bg-primary/10 text-primary flex items-center justify-center">
-            <UIcon name="i-lucide-upload-cloud" class="size-6" />
+      <form class="flex flex-col gap-5" @submit.prevent="handleSubmit">
+        <UFormField
+          label="Video nguồn (videoFile)"
+          name="videoFile"
+          description="Hỗ trợ MP4, MOV (Tối đa 250MB, chuẩn dọc 9:16)"
+          required
+        >
+          <UFileUpload
+            v-if="!uploadedFile"
+            v-model="uploadedFile"
+            accept="video/mp4,video/quicktime"
+            variant="area"
+            icon="i-lucide-upload-cloud"
+            label="Kéo & thả video vào đây hoặc bấm để chọn file"
+            description="MP4 hoặc MOV (Tối đa 250MB)"
+            :disabled="isUploading"
+          >
+            <template #file-leading>
+              <div class="size-8 rounded bg-primary/10 text-primary flex items-center justify-center">
+                <UIcon name="i-lucide-film" class="size-4" />
+              </div>
+            </template>
+          </UFileUpload>
+          <div v-else class="flex items-center gap-3 p-3 rounded-lg bg-muted/20 border border-muted">
+            <UIcon name="i-lucide-film" class="size-6 text-primary" />
+            <div class="flex flex-col gap-0.5">
+              <span class="font-medium text-sm">{{ uploadedFile.name }}</span>
+              <span class="text-xs text-muted">{{ (uploadedFile.size / (1024 * 1024)).toFixed(2) }} MB</span>
+            </div>
+            <UButton
+              type="button"
+              color="error"
+              variant="ghost"
+              size="sm"
+              icon="i-lucide-x"
+              label="Xóa"
+              @click="uploadedFile = null"
+              :disabled="isUploading"
+            />
           </div>
-          <div class="text-center">
-            <p class="text-sm font-semibold text-highlighted">Kéo và thả file video của bạn vào đây</p>
-            <p class="text-xs text-muted mt-0.5">Hỗ trợ MP4, MOV (Tối đa 250MB, chuẩn dọc 9:16)</p>
-          </div>
-          <UBadge color="neutral" variant="outline" size="xs">
-            TikTok_Summer_Sale_Campaign_v2.mp4 (48.2 MB)
-          </UBadge>
-        </div>
+        </UFormField>
 
-        <!-- Progress Bar when uploading -->
-        <div v-if="isUploading" class="flex flex-col gap-1.5">
+        <!-- Loading & Status Bar -->
+        <div v-if="isUploading" class="flex flex-col gap-1.5 p-3 rounded-lg bg-muted/20 border border-muted">
           <div class="flex justify-between text-xs font-medium">
             <span class="text-primary flex items-center gap-1.5">
               <UIcon name="i-lucide-loader-2" class="size-3.5 animate-spin" />
-              Đang phân tích khung hình & trích xuất vector vi phạm...
+              Đang tải lên và đưa vào hàng đợi phân tích Agent...
             </span>
-            <span class="font-mono">{{ uploadProgress }}%</span>
+            <span class="font-mono font-bold">{{ uploadProgress }}%</span>
           </div>
           <div class="w-full bg-muted rounded-full h-2 overflow-hidden">
-            <div class="bg-primary h-full transition-all duration-300" :style="{ width: `${uploadProgress}%` }" />
+            <div
+              class="bg-primary h-full transition-all duration-300 rounded-full"
+              :style="{ width: `${uploadProgress}%` }"
+            />
           </div>
         </div>
 
-        <!-- Metadata Form -->
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <UFormField label="Ngành hàng / Category">
+          <UFormField label="Ngành hàng sản phẩm (productCategory)" required>
             <select
-              v-model="formState.category"
+              v-model="formState.productCategory"
+              :disabled="isUploading"
               class="w-full rounded-lg border border-default bg-elevated px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
             >
-              <option v-for="cat in categories" :key="cat.value" :value="cat.value">{{ cat.label }}</option>
+              <option v-for="cat in categories" :key="cat.value" :value="cat.value">
+                {{ cat.label }}
+              </option>
             </select>
           </UFormField>
 
-          <UFormField label="Nền tảng mục tiêu">
+          <UFormField label="Thị trường mục tiêu (targetMarket)" required>
             <select
-              v-model="formState.targetPlatform"
+              v-model="formState.targetMarket"
+              :disabled="isUploading"
               class="w-full rounded-lg border border-default bg-elevated px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
             >
-              <option v-for="plat in platforms" :key="plat.value" :value="plat.value">{{ plat.label }}</option>
+              <option v-for="market in markets" :key="market.value" :value="market.value">
+                {{ market.label }}
+              </option>
             </select>
           </UFormField>
         </div>
 
-        <UFormField label="Caption / Tiêu đề Quảng cáo" description="AI sẽ quét cả text trong video và phần mô tả">
+        <UFormField
+          label="Tiêu đề / Caption Sản phẩm (productTitle)"
+          description="Nội dung mô tả chiến dịch để AI đối soát cùng âm thanh và text trong video"
+          required
+        >
           <textarea
-            v-model="formState.caption"
+            v-model="formState.productTitle"
             rows="3"
+            :disabled="isUploading"
             class="w-full rounded-lg border border-default bg-elevated p-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
           />
         </UFormField>
 
-        <!-- Submit Button -->
         <div class="flex items-center justify-end gap-3 pt-3 border-t border-muted">
           <UButton
             type="submit"
@@ -115,7 +197,8 @@ const startScan = async () => {
             variant="solid"
             size="md"
             icon="i-lucide-scan"
-            label="Kích hoạt Phân tích AI"
+            label="Tải lên & Khởi chạy Agent"
+            :disabled="!uploadedFile"
             :loading="isUploading"
           />
         </div>

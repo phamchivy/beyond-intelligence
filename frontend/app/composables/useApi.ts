@@ -2,7 +2,7 @@
 export const useApi = () => {
   const config = useRuntimeConfig()
   // Trạng thái Demo Mode toàn cục (dùng useState)
-  const isDemoMode = useState<boolean>('demo_mode', () => true)
+  const isDemoMode = useState<boolean>('demo_mode', () => false)
 
   /**
    * Hàm gọi API chung
@@ -11,7 +11,7 @@ export const useApi = () => {
    */
   const fetchApi = async <T>(endpoint: string, options: any = {}) => {
     // Nếu bật Demo Mode, hướng request về Local Mock API của Nuxt (server/api/)
-    const baseUrl = isDemoMode.value ? '' : config.public.apiBase
+    const baseUrl = isDemoMode.value ? '/api' : config.public.apiBase
 
     return await useFetch<T>(`${baseUrl}${endpoint}`, {
       ...options,

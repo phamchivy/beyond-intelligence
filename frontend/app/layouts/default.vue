@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // State quản lý cờ Demo Mode (Mock API vs Live .NET 8 Backend)
-const isDemoMode = useState<boolean>('isDemoMode', () => true)
+const { isDemoMode } = useEngineApi()
 const colorMode = useColorMode()
 
 const toggleColorMode = () => {
