@@ -1,58 +1,49 @@
 """
-Tool Port -- "hop dong" cho moi hanh dong ma Agent co the thuc thi ra
-ben ngoai (goi API, truy van DB, tinh toan, lay du lieu thi truong...).
+Memory Port -- "hop dong" cho kha nang luu tru va truy xuat lai thong tin
+qua nhieu lan chay / nhieu buoc cua Agent (khac voi Context, la ngu canh
+tuc thoi cho MOT lan reasoning).
 
-Voi kien truc "AI Decision & Execution System", Tool chinh la noi Agent
-"cham" vao the gioi thuc: lay market signal, goi API doi thu, thuc thi
-hanh dong (vd: tao de xuat gia, gui canh bao...). Domain/Application chi
-biet Protocol nay, khong biet tool cu the goi API nao / thu vien nao.
+Agent chi biet memory.get(...) / memory.save(...), khong biet dang sau
+la Redis, PostgreSQL hay in-memory dict.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Protocol, runtime_checkable
+from uuid import uuid4
 
 
 @dataclass(frozen=True, slots=True)
-class ToolResult:
-    """Ket qua tra ve sau khi mot Tool thuc thi xong."""
+class MemoryItem:
+    """Mot don vi thong tin duoc luu vao Memory."""
 
-    success: bool
-    output: Any = None
-    error: str | None = None
+    key: str
+    value: Any
+    id: str = field(default_factory=lambda: str(uuid4()))
+    namespace: str = "default"  # vd: "agent_run:<task_id>", "business:<domain>"
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: dict[str, Any] = field(default_factory=dict)
-
-    @staticmethod
-    def ok(output: Any, metadata: dict[str, Any] | None = None) -> "ToolResult":
-        return ToolResult(success=True, output=output, metadata=metadata or {})
-
-    @staticmethod
-    def fail(error: str, metadata: dict[str, Any] | None = None) -> "ToolResult":
-        return ToolResult(success=False, error=error, metadata=metadata or {})
 
 
 @runtime_checkable
-class Tool(Protocol):
+class Memory(Protocol):
     """
-    Port cho mot hanh dong/kha nang cu the ma Agent co the goi.
+    Port cho kha nang luu tru/truy xuat MemoryItem theo key.
 
-    `name` va `description` duoc dung de mo ta cho LLM biet ve tool nay
-    (function calling) -- nen viet description ro rang, vi LLM se dua
-    vao do de quyet dinh co goi tool hay khong va goi voi tham so gi.
+    `namespace` cho phep tach memory theo boi canh (vd: tach memory cua
+    tung task, hoac tach memory theo tung business domain) ma khong can
+    doi contract cua port.
     """
 
-    @property
-    def name(self) -> str:
+    async def get(self, key: str, namespace: str = "default") -> MemoryItem | None:
         ...
 
-    @property
-    def description(self) -> str:
+    async def save(self, item: MemoryItem) -> None:
         ...
 
-    @property
-    def parameters_schema(self) -> dict[str, Any]:
-        """JSON Schema mo ta cac tham so ma execute() can nhan."""
+    async def delete(self, key: str, namespace: str = "default") -> None:
         ...
 
-    async def execute(self, arguments: dict[str, Any]) -> ToolResult:
+    async def list_keys(self, namespace: str = "default") -> list[str]:
         ...

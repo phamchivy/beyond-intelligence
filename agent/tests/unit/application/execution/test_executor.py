@@ -105,3 +105,59 @@ class TestExecuteApproved:
         outcome = await executor.execute_approved(_call())
 
         assert outcome.status == ToolExecutionStatus.UNKNOWN_TOOL
+
+
+class TestApproveWithMemory:
+    """Kich ban quan trong nhat: mo phong dung luong HITL that -- 1 lan
+    goi execute() (nhu dang chay trong request A), roi MOT LAN GOI KHAC
+    HOAN TOAN (mo phong request B, sau khi nguoi dung bam duyet) chi
+    dung call_id de tim lai va thuc thi -- khong con giu tool_call trong
+    bo nho cua request A nua."""
+
+    async def test_approve_by_call_id_after_pending(self) -> None:
+        from infrastructure.memory.in_memory_memory import InMemoryMemory
+
+        tool = FakeTool()
+        policy = ToolPolicy().with_permission(ToolPermission("swap_music", ToolRiskLevel.HIGH))
+        memory = InMemoryMemory()
+        executor = ToolExecutor(tools={"swap_music": tool}, tool_policy=policy, memory=memory)
+
+        # "Request A" -- LLM yeu cau goi tool rui ro cao
+        pending = await executor.execute(_call())
+        assert pending.status == ToolExecutionStatus.PENDING_APPROVAL
+        assert tool.call_count == 0
+
+        # "Request B" -- hoan toan doc lap, CHI co call_id (giong nhu
+        # Backend nhan duoc tu request duyet cua nguoi dung)
+        call_id = pending.tool_call.call_id
+        outcome = await executor.approve(call_id)
+
+        assert outcome.status == ToolExecutionStatus.EXECUTED
+        assert tool.call_count == 1
+
+    async def test_approve_unknown_call_id_returns_not_found(self) -> None:
+        from infrastructure.memory.in_memory_memory import InMemoryMemory
+
+        executor = ToolExecutor(tools={}, tool_policy=ToolPolicy(), memory=InMemoryMemory())
+
+        outcome = await executor.approve("call-id-khong-ton-tai")
+
+        assert outcome.status == ToolExecutionStatus.NOT_FOUND
+
+    async def test_approve_removes_pending_action_after_execution(self) -> None:
+        from infrastructure.memory.in_memory_memory import InMemoryMemory
+
+        tool = FakeTool()
+        policy = ToolPolicy().with_permission(ToolPermission("swap_music", ToolRiskLevel.HIGH))
+        memory = InMemoryMemory()
+        executor = ToolExecutor(tools={"swap_music": tool}, tool_policy=policy, memory=memory)
+
+        pending = await executor.execute(_call())
+        call_id = pending.tool_call.call_id
+        await executor.approve(call_id)
+
+        # Duyet lan hai voi cung call_id -> phai NOT_FOUND, khong duoc
+        # thuc thi lai lan nua (tranh double-execute).
+        second_attempt = await executor.approve(call_id)
+        assert second_attempt.status == ToolExecutionStatus.NOT_FOUND
+        assert tool.call_count == 1  # van chi 1 lan
