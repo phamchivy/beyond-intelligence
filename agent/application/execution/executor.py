@@ -100,3 +100,67 @@ class ToolExecutor:
         return ToolExecutionOutcome(
             status=ToolExecutionStatus.EXECUTED, tool_call=tool_call, result=result
         )
+
+    async def execute_approved(self, tool_call: ToolCall) -> ToolExecutionOutcome:
+        """
+        Thuc thi mot ToolCall DA duoc nguoi dung phe duyet tuong minh
+        (vd: da bam [APPROVE & FIX] tren Action Card).
+
+        Khac voi execute(): bo qua trang thai REQUIRE_APPROVAL (vi da
+        co xac nhan roi, khong can hoi lai). NHUNG van kiem tra DENY --
+        chinh sach cam tuyet doi (vd: tool bi vo hieu hoa, hoac khong
+        nam trong danh sach cho phep) khong the bi "vuot qua" chi vi
+        nguoi dung bam duyet; DENY la quyet dinh he thong, khong phai
+        quyet dinh cua tung request.
+
+        Noi goi ham nay: tang Backend, sau khi da tu xac thuc rang
+        nguoi dung co quyen va da thuc su bam duyet hanh dong nay --
+        KHONG goi tu ReasoningService/vong lap Agent.run() thong thuong.
+        """
+        tool = self._tools.get(tool_call.tool_name)
+        if tool is None:
+            log_event(logger, "warning", "tool_call_unknown", tool_name=tool_call.tool_name)
+            return ToolExecutionOutcome(
+                status=ToolExecutionStatus.UNKNOWN_TOOL, tool_call=tool_call
+            )
+
+        decision = self._tool_policy.authorize(tool_call.tool_name)
+        log_event(
+            logger,
+            "info",
+            "tool_call_approved_execution",
+            tool_name=tool_call.tool_name,
+            policy_decision=decision.value,
+        )
+
+        if decision == ToolPolicyDecision.DENY:
+            # DENY luon thang -- khong the "duyet vuot qua" chinh sach cam.
+            return ToolExecutionOutcome(status=ToolExecutionStatus.DENIED, tool_call=tool_call)
+
+        # ALLOW hoac REQUIRE_APPROVAL (da duoc duyet tuong minh) -> thuc thi that.
+        try:
+            with log_duration(
+                logger, "tool_call_completed", tool_name=tool_call.tool_name, via_approval=True
+            ):
+                result = await tool.execute(tool_call.arguments)
+        except Exception as exc:
+            log_event(
+                logger,
+                "error",
+                "tool_call_raised",
+                tool_name=tool_call.tool_name,
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            raise
+
+        log_event(
+            logger,
+            "info",
+            "tool_call_result",
+            tool_name=tool_call.tool_name,
+            tool_success=result.success,
+        )
+        return ToolExecutionOutcome(
+            status=ToolExecutionStatus.EXECUTED, tool_call=tool_call, result=result
+        )
