@@ -9,6 +9,14 @@
   <ItemGroup>
     <PackageReference Include="FastEndpoints" Version="8.2.0" />
     <PackageReference Include="FastEndpoints.Swagger" Version="8.2.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Http.Features" Version="5.0.17" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="tests\**" />
+    <Content Remove="tests\**" />
+    <EmbeddedResource Remove="tests\**" />
+    <None Remove="tests\**" />
   </ItemGroup>
 
 </Project>
