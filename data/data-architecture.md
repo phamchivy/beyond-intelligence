@@ -2,40 +2,57 @@
 
 > Architecture and coding standard for the `data/` layer (**Platform 1 — Data Intelligence**), designed to be reused across AI projects: the business content changes, the frame does not.
 
-**Version:** 1.0
-**Date:** 12/08/2026
+**Version:** 1.1
+**Date:** 18/08/2026
 **Applies to:** the `data/` directory
-**Companion documents:** [tech-stack-evaluation.md](tech-stack-evaluation.md) — why each tool was chosen · [agent-architecture-standard.md](../docs/architecture/agent-architecture-standard.md) — the same standard for the `agent/` layer
+**Companion documents:** [tech-stack-evaluation.md](tech-stack-evaluation.md) — why each tool was chosen · [implementation-plan.md](implementation-plan.md) — the build order and schedule for this architecture · [agent-architecture-standard.md](../docs/architecture/agent-architecture-standard.md) — the same standard for the `agent/` layer
 **Theoretical basis:** Clean Architecture + Ports & Adapters (as established for `agent/`) applied to the five-stage data lifecycle (generation → storage → ingestion → transformation → serving), with medallion layering.
+
+**Changes in 1.1.** Media assets — video, image, audio — become a first-class source type (§7.6, §6, §12.4). Request-time invocation joins Dagster as a second orchestration edge (§1, §2). The serving claim in §11 is scoped: Postgres remains the contract surface for the .NET backend, and a thin FastAPI process on `:8002` serves the agent layer (§11.4). No section from 1.0 was removed.
 
 ---
 
 ## 1. Purpose and scope
 
-The `data/` layer owns the **Sense** step of the platform's philosophy (`Sense → Understand → Reason → Simulate → Decide → Act → Learn`). It takes messy, untyped outside data — CSVs, API responses, database rows, documents — and turns it into two trusted products:
+The `data/` layer owns the **Sense** step of the platform's philosophy (`Sense → Understand → Reason → Simulate → Decide → Act → Learn`). It takes messy, untyped outside data — CSVs, API responses, database rows, documents, uploaded videos and images — and turns it into two trusted products:
 
 1. **Structured data** the backend and the simulation layer can query.
-2. **Retrievable knowledge** document chunks go into the retrieval index for the agent layer to search.
+2. **Retrievable knowledge** document chunks and media annotations go into the retrieval index for the agent layer to search.
 
 ### In scope
 
-| Responsibility                                    | Where it is specified |
-| ------------------------------------------------- | --------------------- |
-| Ingest CSV, Excel, JSON, API, Database, Documents | §7.1                  |
-| Validation and data quality                       | §10                   |
-| Cleaning, typing, deduplication, normalization    | §7.2                  |
-| Data integration and modelling                    | §7.3                  |
-| Feature / analytics tables                        | §7.3                  |
-| Chunking, embedding, indexing for retrieval       | §7.4, §12             |
-| Retrieval implementation behind the agent's port  | §12                   |
-| Data contracts toward the backend                 | §9, §11               |
-| Pipeline observability and lineage                | §13                   |
-| The evaluation harness (DE half of Platform 7)    | §7.5                  |
+| Responsibility                                            | Where it is specified |
+| --------------------------------------------------------- | --------------------- |
+| Ingest CSV, Excel, JSON, API, Database, Documents         | §7.1                  |
+| Ingest media assets — video, image, audio                 | §7.1, §7.6            |
+| Validation and data quality                               | §10                   |
+| Cleaning, typing, deduplication, normalization            | §7.2                  |
+| Data integration and modelling                            | §7.3                  |
+| Feature / analytics tables                                | §7.3                  |
+| Media derivation — frames, audio, transcript, annotations | §7.6                  |
+| Chunking, embedding, indexing for retrieval               | §7.4, §12             |
+| Retrieval implementation behind the agent's port          | §12                   |
+| Data contracts toward the backend                         | §9, §11               |
+| The HTTP data service the agent layer calls               | §11.4                 |
+| Pipeline observability and lineage                        | §13                   |
+| The evaluation harness (DE half of Platform 7)            | §7.5                  |
+
+### Two invocation modes
+
+Version 1.0 assumed every pipeline was started by a Dagster schedule. That is still the default, but it is not the only edge. A consumer who has just uploaded a video needs an answer in seconds, not at the next scheduled tick.
+
+| Mode | Started by | Latency | Used for |
+| --- | --- | --- | --- |
+| **Scheduled** | Dagster schedule or sensor | minutes to hours | reference corpora — historical performance, catalogs, policy documents, brand guidelines |
+| **Request-time** | an HTTP call to `interface/api/` (§11.4) | seconds | the asset a user just uploaded and is waiting on |
+
+**This needs no new architecture, and that is the point.** §2 already requires every function in `application/pipelines/` to be callable from a plain `pytest` test with no Dagster import. A rule written for testability turns out to have bought a second orchestration edge for free: FastAPI becomes another thin caller of the same pipeline functions, exactly as a Dagster asset is. If a pipeline cannot be called this way, §2 was already being violated.
 
 ### Explicitly out of scope
 
-- **Reasoning over the data.** Context construction, planning and decision generation belong to `agent/`. This layer returns documents and rows; it never interprets them.
-- **Streaming.** Everything here is batch or micro-batch. §17 states the trigger for revisiting that.
+- **Reasoning over the data.** Context construction, planning and decision generation belong to `agent/`. This layer returns documents, rows and media annotations; it never interprets them.
+- **Streaming.** Everything here is batch, micro-batch or request-time. Request-time is not streaming: it is a synchronous run over one asset with a bounded end, with no continuous ingestion, no windowing and no broker. §17 states the trigger for genuine streaming.
+- **Media generation.** This layer describes media; it does not create it. Producing a mockup image or rendering a video is a `Tool` in `agent/`, invoked after a decision. The line is the same one §1 already draws for text.
 - **Being a warehouse migration.** No attempt to consolidate all company data. One pipeline per dataset that a consumer actually asked for.
 - **Pitch and business-case material.** `business/` holds the hackathon's problem framing, market sizing and go-to-market case — pitch content, not runtime configuration. It is not a dependency of this layer.
 
@@ -52,10 +69,11 @@ This separation lets us test pipelines without external services and replace a t
 ### The four layers
 
 ```text
-orchestration/       starts a use case (Dagster, CLI)
-       │
-       ▼
-application/         coordinates the steps (ingest, normalize, model, index, evaluate)
+orchestration/  interface/api/    start a use case (Dagster, CLI, HTTP)
+       │              │
+       └──────┬───────┘
+              ▼
+application/         coordinates the steps (ingest, normalize, model, index, extract, evaluate)
        │
        ▼
 domain/              defines data concepts, rules and ports
@@ -63,6 +81,8 @@ domain/              defines data concepts, rules and ports
        │ implements the ports
 infrastructure/      talks to tools and external systems
 ```
+
+`orchestration/` and `interface/api/` are peers: two thin edges onto the same application layer. Neither may contain transformation logic, and neither may be imported by the other.
 
 A run follows the diagram from top to bottom:
 
@@ -74,15 +94,22 @@ A run follows the diagram from top to bottom:
 | Layer | Main question | Contains | May depend on |
 | --- | --- | --- | --- |
 | `orchestration/` | Who starts the work, and when? | Dagster assets, schedules, partitions and CLI commands | Application |
-| `application/` | What steps does the use case perform? | The five pipelines in §7 and their supporting services | Domain; processing engines such as Polars and DuckDB |
+| `interface/api/` | Who asks for work right now? | FastAPI routes, request/response DTOs, mappers | Application |
+| `application/` | What steps does the use case perform? | The six pipelines in §7 and their supporting services | Domain; processing engines such as Polars and DuckDB |
 | `domain/` | What do the data concepts mean, and what is valid? | Entities, policies and port definitions (§6) | Standard library, Pydantic and Arrow boundary types |
 | `infrastructure/` | How do we talk to a specific external system? | dlt sources, database adapters, object storage and model adapters | Domain ports; any required SDK, driver or framework |
 
-#### `orchestration/`: start the work
+#### `orchestration/`: start the work on a schedule
 
 This layer decides when and with which parameters a pipeline runs, for example: “normalize partition `2026-08-12` and retry twice.” It must not contain transformation logic.
 
 A Dagster asset should normally do only two things: call an application pipeline and return its result as metadata.
+
+#### `interface/api/`: start the work on request
+
+The same rule, one layer over. A route handler resolves its arguments, calls one application function, and converts the result into a response DTO. It must not open a database connection, call a vendor SDK, or contain a transformation step.
+
+**Route handlers return DTOs, never domain entities.** This is the rule [integration-architecture.md](../docs/architecture/integration-architecture.md) §4.1 states for every pod: a domain entity that leaks into a JSON response becomes a cross-service contract by accident, and then cannot be refactored. `interface/api/schemas.py` holds the response models; `interface/api/mappers.py` holds the conversion.
 
 #### `application/`: coordinate the work
 
@@ -174,7 +201,9 @@ def silver_orders(context, store: ObjectStore) -> MaterializeResult:
     return MaterializeResult(metadata=stats.as_dagster_metadata())
 ```
 
-**Compliance check:** every function in `application/pipelines/` must be callable from a plain `pytest` test with no Dagster import. If it cannot, pipeline logic has leaked into orchestration.
+**Compliance check:** every function in `application/pipelines/` must be callable from a plain `pytest` test with no Dagster import and no FastAPI import. If it cannot, pipeline logic has leaked into an edge.
+
+This check is what makes the two invocation modes of §1 possible at all. A pipeline that satisfies it can be called by a Dagster asset, an HTTP route, a CLI command or a test, and none of those callers knows about the others.
 
 ---
 
@@ -183,30 +212,41 @@ def silver_orders(context, store: ObjectStore) -> MaterializeResult:
 Four layers. The first three are the standard medallion pattern; the fourth exists because this platform serves an agent, not only a dashboard.
 
 ```
-                    EXTERNAL SOURCES
-        CSV · Excel · JSON · REST API · Database · Documents
-                            │
-                            ▼
-┌───────────────────────────────────────────────────────────┐
-│ BRONZE — raw, append-only, schema-on-read                 │
-│ Mirrors the source exactly. Never edited, never deleted   │
-│ before retention. Every future bug is fixable by          │
-│ reprocessing from here instead of re-fetching.            │
-└───────────────────────────┬───────────────────────────────┘
-                            ▼
-┌───────────────────────────────────────────────────────────┐
-│ SILVER — typed, deduplicated, schema-on-write             │
-│ One table per entity. Contract enforced at write time.    │
-│ PII tagged. Failures quarantined, not dropped.            │
-└───────────────┬───────────────────────────┬───────────────┘
-                ▼                           ▼
+                        EXTERNAL SOURCES
+    CSV · Excel · JSON · REST API · Database · Documents · Media
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│ BRONZE — raw, append-only, schema-on-read                   │
+│ Mirrors the source exactly. Never edited, never deleted     │
+│ before retention. Every future bug is fixable by            │
+│ reprocessing from here instead of re-fetching.              │
+│                                                             │
+│  records/  Parquet, one prefix per dataset                  │
+│  assets/   media and document blobs, byte-for-byte          │
+└──────────────┬───────────────────────────┬──────────────────┘
+               │ records                   │ asset blobs
+               ▼                           ▼
+     ┌──────────────────┐        ┌──────────────────────┐
+     │ normalize (§7.2) │        │   extract (§7.6)     │
+     │ Polars + Pandera │        │ ffmpeg → ASR → VLM   │
+     └────────┬─────────┘        └──────────┬───────────┘
+              │                             │
+              ▼                             ▼
+┌─────────────────────────────────────────────────────────────┐
+│ SILVER — typed, deduplicated, schema-on-write               │
+│ One table per entity. Contract enforced at write time.      │
+│ PII tagged. Failures quarantined, not dropped.              │
+│ Media derivations land here as ordinary typed rows.         │
+└───────────────┬─────────────────────────┬───────────────────┘
+                ▼                         ▼
 ┌───────────────────────────┐  ┌────────────────────────────┐
-│ GOLD — modelled for       │  │ INDEX — chunks + vectors    │
-│ consumption, stable       │  │ for retrieval. Rebuildable  │
-│ schema, SLA-backed        │  │ from Silver at any time.    │
+│ GOLD — modelled for       │  │ INDEX — chunks + vectors   │
+│ consumption, stable       │  │ for retrieval. Rebuildable │
+│ schema, SLA-backed        │  │ from Silver at any time.   │
 └───────────┬───────────────┘  └────────────┬───────────────┘
             ▼                               ▼
-    api.v1_* views (§11)            Retriever port (§12)
+    api.v1_* views (§11)        Retriever port (§12) · data API (§11.4)
             │                               │
       .NET backend                    agent/ layer
 ```
@@ -214,14 +254,22 @@ Four layers. The first three are the standard medallion pattern; the fourth exis
 | Layer      | Physical store              | Format                   | Engine that writes it                        | Schema posture | Mutability          |
 | ---------- | --------------------------- | ------------------------ | -------------------------------------------- | -------------- | ------------------- |
 | Bronze     | Object storage (MinIO / S3) | Parquet + zstd           | dlt                                          | on read        | append-only         |
+| Bronze     | Object storage `assets/`    | original bytes, unaltered | `ingest` / the upload path                  | none           | append-only         |
 | Silver     | Object storage              | Parquet + zstd           | Polars                                       | on write       | partition overwrite |
+| Silver     | Object storage `frames/`    | JPEG                     | `extract`                                    | none           | overwrite by asset  |
 | Gold       | Postgres `gold` schema      | Postgres tables          | DuckDB + dbt, published by `publish_service` | on write       | MERGE by key        |
 | Index      | Postgres `index` schema     | tables + `pgvector` HNSW | embed pipeline                               | on write       | upsert by chunk id  |
 | Quarantine | Object storage              | Parquet + zstd           | Polars                                       | on read        | append-only         |
 
+**Media is not a new layer.** A video is a blob in Bronze under exactly the rule §7.1 already states for documents: copied byte-for-byte, parsed later. Its derivations — transcript, frame captions, extracted signals — are ordinary typed rows in Silver, subject to the same contract, quarantine and partition rules as any other entity. Frame JPEGs sit beside them in object storage because a JPEG in a Parquet column helps nobody; the Silver row carries the path.
+
+The reason this works without a special case is that `extract` produces **text and numbers**. Once a video has become a transcript and eight captions, every downstream layer is doing the work it already knew how to do.
+
 **Bronze is not optional.** It is tempting to skip it when a pipeline reads one CSV. Don't. Bronze is what makes "we had a bug in the normalizer for three days" a fifteen-minute reprocess instead of a conversation about whether the source still has the data.
 
 **Index is derived, never authoritative.** Deleting the whole `index` schema and rebuilding it from Silver must always be a safe operation. Nothing may be stored only in the index.
+
+**Silver media derivations are expensive, so they are cached, not recomputed.** Rebuilding Silver from Bronze normally costs CPU. Rebuilding a transcript and eight captions costs a model call per asset, in money and in latency, and it depends on a network that may be unavailable exactly when it is needed. §7.6 therefore keys every derivation on the content hash of the blob plus the extractor version, so a re-run over unchanged input is free. This is §8's idempotency principle applied to a call rather than a partition, and it is the same mechanism that lets a pre-warmed set of assets survive a dead network.
 
 ---
 
@@ -239,16 +287,19 @@ flowchart TB
         S3["REST API"]
         S4["Database"]
         S5["Documents — PDF, DOCX, PPTX"]
+        S6["Media — video, image, audio"]
     end
 
     ING(["<b>ingest</b><br/>dlt"])
     NORM(["<b>normalize</b><br/>Polars + Pandera"])
+    EXT(["<b>extract</b><br/>ffmpeg → Transcriber<br/>→ FrameCaptioner"])
     MOD(["<b>model</b><br/>DuckDB + dbt"])
     IXP(["<b>index</b><br/>Docling + fastembed"])
     EVAL(["<b>evaluate</b><br/>scikit-learn<br/>labeled JSONL in git"])
 
     subgraph LAKE["Object storage — MinIO local, S3 / R2 / GCS cloud"]
-        BRONZE[("Bronze<br/>Parquet + zstd<br/>append-only")]
+        BRONZE[("Bronze records<br/>Parquet + zstd<br/>append-only")]
+        BLOB[("Bronze assets<br/>original bytes<br/>append-only")]
         SILVER[("Silver<br/>Parquet + zstd<br/>contract enforced")]
         QUAR[("Quarantine<br/>rejected rows<br/>+ violation")]
     end
@@ -260,28 +311,41 @@ flowchart TB
         OPS[("ops<br/>watermarks, run log,<br/>quality violations")]
     end
 
+    DAPI[["interface/api — :8002<br/>FastAPI, DTOs only"]]
+
     subgraph CONS["Consumers"]
         NET[".NET 8 backend"]
         AGENT["agent/ layer"]
     end
 
     S1 & S2 & S3 & S4 & S5 --> ING --> BRONZE
+    S6 --> ING --> BLOB
     BRONZE --> NORM --> SILVER
+    BLOB --> EXT --> SILVER
     NORM -.->|"rejected rows"| QUAR
+    EXT -.->|"unparseable asset"| QUAR
     SILVER --> MOD --> GOLD
     SILVER --> IXP --> IDX
-    BRONZE -.->|"document blobs"| IXP
+    BLOB -.->|"document blobs"| IXP
     ING -.->|"watermarks, run stats"| OPS
 
     GOLD --> API
     API -->|"SQL, read-only role"| NET
-    IDX -->|"Retriever port — §12<br/>pg_trgm + pgvector, RRF"| AGENT
+    IDX --> DAPI
+    GOLD --> DAPI
+    DAPI -->|"HTTP JSON — §11.4<br/>Retriever + Tool ports"| AGENT
+    AGENT -.->|"POST /api/v1/assets<br/>request-time"| DAPI
+    DAPI -.->|"calls the same<br/>pipeline functions"| EXT
 
     EVAL -.->|"measures"| IDX
     EVAL -.->|"measures"| GOLD
 ```
 
-The five rounded nodes are the pipelines of §7, each labelled with the tool that implements it; cylinders are stores and the yellow boxes are the systems they live in. Solid arrows are the main data path, dashed ones are side paths — quarantine, document blobs, operational metadata, measurement. Dagster does not appear as a box because it is not in the data path: it schedules and monitors all five pipelines, which is §13's subject.
+The six rounded nodes are the pipelines of §7, each labelled with the tool that implements it; cylinders are stores and the yellow boxes are the systems they live in. Solid arrows are the main data path, dashed ones are side paths — quarantine, document blobs, operational metadata, measurement, and the request-time edge.
+
+Two things in this diagram are worth stating in words. **`interface/api` is not a data store and holds no state**: it reads Postgres and calls pipeline functions, nothing more. And **the dashed line from the API back to `extract`** is the request-time mode of §1 — the same function Dagster calls on a schedule, called by a route handler instead.
+
+Dagster does not appear as a box because it is not in the data path: it schedules and monitors the pipelines, which is §13's subject.
 
 ### Stack decisions
 
@@ -295,13 +359,19 @@ The five rounded nodes are the pipelines of §7, each labelled with the tool tha
 | Object storage | MinIO local, S3 / R2 / GCS cloud, via `fsspec` | §4 |
 | File format | Parquet + zstd | §3 |
 | Serving store | Postgres 16 | §11 |
+| Serving API | FastAPI + uvicorn, port `8002` | §11.4 |
 | Document parsing | Docling, with `pymupdf4llm` as a fast path | §7.4 |
+| Media decoding — frames, audio | `imageio-ffmpeg` driven by `subprocess` | §7.6 |
+| Transcription | Gemini audio, behind the `Transcriber` port | §6, §7.6 |
+| Frame captioning and on-screen text | Gemini vision, behind the `FrameCaptioner` port | §6, §7.6 |
 | Embeddings | fastembed | §7.4 |
 | Vector and lexical search | `pgvector` + `pg_trgm` + `unaccent` | §12 |
 | Orchestration and quality gating | Dagster — assets, asset checks | §10, §13 |
 | Evaluation metrics | scikit-learn | §7.5 |
 | Logging | structlog | §13 |
 | Packaging, lint, tests, config | uv, Ruff, pytest, pydantic-settings | §16, §18 |
+
+**No local model weights.** Transcription and captioning are hosted calls, not bundled models. This keeps the container small and the build fast, at the cost of a hard network dependency on the path that matters most. That cost is paid down by the content-hash cache of §7.6 rather than by shipping a local model, and §17 records the trigger for reversing the decision. `tech-stack-evaluation.md` §16 argues it in full.
 
 **No table format yet.** There is deliberately no Iceberg or Delta Lake here — plain Parquet partitions are enough while there is one writer per dataset and nothing needs `MERGE` or time travel. §17 records the trigger for adopting one.
 
@@ -327,24 +397,33 @@ Candidates considered, trade-offs and rejected alternatives are in [tech-stack-e
 │  │ (a file, not   │ publish│  gold · index · api · ops    │  │
 │  │  a service)    │        │  :5432                       │  │
 │  └────────────────┘        └──────────────┬───────────────┘  │
-└─────────────────────────────────────────────┼────────────────┘
-                                              │ SQL, read-only role
-                                              ▼
-                                    .NET 8 backend
+│                                           │                  │
+│  ┌────────────────────────────────────────┴───────────────┐  │
+│  │  data API — uvicorn :8002                              │  │
+│  │  interface/api/  ·  reads Postgres, calls pipelines    │  │
+│  └───────┬──────────────────────────────────┬─────────────┘  │
+└──────────┼──────────────────────────────────┼────────────────┘
+           │ HTTP JSON (§11.4)                │ SQL, read-only role
+           ▼                                  ▼
+      agent/ layer                     .NET 8 backend
 ```
 
-Two containers (MinIO, Postgres) plus one process (`dagster dev`). DuckDB and Polars are libraries — nothing to run, nothing to keep alive.
+Two containers (MinIO, Postgres) plus two processes (`dagster dev`, `uvicorn`). DuckDB and Polars are libraries — nothing to run, nothing to keep alive.
+
+**The upload directory is a shared volume, not an HTTP transfer.** The .NET backend already writes uploaded media to `backend/wwwroot/uploads/`. That directory is mounted into the data container, and `POST /api/v1/assets` (§11.4) receives a *path*, never the bytes. Moving a 150 MB video through a second HTTP hop when both processes can see the same disk buys nothing and adds a timeout to the demo path.
 
 ### Cloud — the same code
 
 Only the resource configuration changes. No pipeline code is aware of which column it is in.
 
-| Local              | Cloud                            | What changes                    |
-| ------------------ | -------------------------------- | ------------------------------- |
-| MinIO on `:9000`   | S3 / R2 / GCS                    | `OBJECT_STORE_URL`, credentials |
-| Postgres container | Neon / Supabase / RDS            | `DATABASE_URL`                  |
-| DuckDB in-process  | DuckDB in-process                | nothing                         |
-| `dagster dev`      | Dagster OSS on a container / K8s | deployment manifest only        |
+| Local                    | Cloud                            | What changes                    |
+| ------------------------ | -------------------------------- | ------------------------------- |
+| MinIO on `:9000`         | S3 / R2 / GCS                    | `OBJECT_STORE_URL`, credentials |
+| Postgres container       | Neon / Supabase / RDS            | `DATABASE_URL`                  |
+| DuckDB in-process        | DuckDB in-process                | nothing                         |
+| `dagster dev`            | Dagster OSS on a container / K8s | deployment manifest only        |
+| `uvicorn` on `:8002`     | the same container, behind a proxy | nothing in code                |
+| Mounted upload directory | a shared volume or an object-store prefix | `ASSET_ROOT`           |
 
 **This is the whole reason `fsspec`-style URLs and a single `Settings` object are non-negotiable.** The moment a path is hard-coded to `/home/…` or `localhost`, the cloud path stops being free.
 
@@ -362,6 +441,8 @@ data/
 │   │   ├── dataset.py              # identity, owner, classification, retention
 │   │   ├── record_batch.py         # Arrow-backed batch + provenance
 │   │   ├── document.py             # ParsedDocument, DocumentBlob
+│   │   ├── media_asset.py          # MediaAsset, FrameRef, Transcript,
+│   │   │                           #   FrameAnnotation, AssetArtifacts
 │   │   ├── chunk.py                # Chunk, EmbeddedChunk
 │   │   ├── data_contract.py        # name, version, fields, semantics, SLA
 │   │   ├── quality_report.py       # ValidationResult, Violation
@@ -372,6 +453,7 @@ data/
 │   │   ├── time_window.py
 │   │   ├── watermark.py
 │   │   ├── vector.py               # dimensions + model identity
+│   │   ├── content_hash.py         # sha256 of a blob — the cache key (§7.6)
 │   │   └── classification.py       # public | internal | confidential | pii
 │   │
 │   ├── ports/
@@ -381,6 +463,8 @@ data/
 │   │   ├── validator.py
 │   │   ├── transformer.py
 │   │   ├── document_parser.py
+│   │   ├── transcriber.py          # audio  → Transcript
+│   │   ├── frame_captioner.py      # frames → FrameAnnotation
 │   │   ├── chunker.py
 │   │   ├── embedder.py
 │   │   ├── retriever.py
@@ -394,16 +478,18 @@ data/
 │
 ├── application/
 │   ├── pipelines/
-│   │   ├── ingest.py               # Source      → Bronze
-│   │   ├── normalize.py            # Bronze      → Silver
-│   │   ├── model.py                # Silver      → Gold
-│   │   ├── index.py                # Silver/docs → Index
-│   │   └── evaluate.py             # cases       → metrics + report
+│   │   ├── ingest.py               # Source        → Bronze
+│   │   ├── normalize.py            # Bronze        → Silver
+│   │   ├── extract.py              # Bronze assets → Silver  (§7.6)
+│   │   ├── model.py                # Silver        → Gold
+│   │   ├── index.py                # Silver/docs   → Index
+│   │   └── evaluate.py             # cases         → metrics + report
 │   │
 │   └── services/
 │       ├── quality_service.py      # runs validation, applies QualityPolicy
 │       ├── contract_service.py     # load, compare, export JSON Schema
 │       ├── retrieval_service.py    # fuses lexical + dense legs
+│       ├── asset_service.py        # read-through cache over extract (§7.6)
 │       └── publish_service.py      # Gold → Postgres, MERGE by key
 │
 ├── infrastructure/
@@ -424,6 +510,18 @@ data/
 │   │   ├── docling_parser.py
 │   │   └── pymupdf_parser.py       # fast path for text-only PDF
 │   │
+│   ├── media/
+│   │   └── ffmpeg.py               # plain functions, no port — see §6
+│   │
+│   ├── asr/
+│   │   ├── gemini_transcriber.py
+│   │   └── mock_transcriber.py     # deterministic, for tests
+│   │
+│   ├── vision/
+│   │   ├── gemini_captioner.py
+│   │   ├── byteplus_captioner.py   # OpenAI-compatible base_url swap
+│   │   └── mock_captioner.py       # deterministic, for tests
+│   │
 │   ├── chunking/
 │   │   └── docling_chunker.py
 │   │
@@ -443,7 +541,7 @@ data/
 │   └── catalog/
 │       └── postgres_catalog.py     # ops.ingestion_watermark, ops.run_log
 │
-├── orchestration/                  # Dagster — the interface layer
+├── orchestration/                  # Dagster — the scheduled edge
 │   ├── definitions.py              # the single Definitions object
 │   ├── resources.py                # composition root (§18)
 │   ├── partitions.py
@@ -455,6 +553,13 @@ data/
 │       ├── gold.py
 │       ├── index.py
 │       └── evaluation.py
+│
+├── interface/                      # FastAPI — the request-time edge
+│   └── api/
+│       ├── app.py                  # the ASGI app, lifespan, health
+│       ├── routes.py               # the four endpoints of §11.4
+│       ├── schemas.py              # response DTOs — never domain entities
+│       └── mappers.py              # domain entity → DTO
 │
 ├── transformations/                # dbt project
 │   ├── dbt_project.yml
@@ -485,7 +590,7 @@ data/
 └── tests/
     ├── unit/                       # no network, no DB, mock adapters
     ├── integration/                # real DuckDB, real Postgres
-    ├── e2e/                        # one partition through all five pipelines
+    ├── e2e/                        # one partition through every pipeline
     └── fixtures/
 ```
 
@@ -595,6 +700,32 @@ class DocumentParser(Protocol):
     def supports(self, media_type: str) -> bool: ...
 
 
+class Transcriber(Protocol):
+    """Speech in an audio file becomes text. One hosted or local
+    implementation at a time; a mock keeps the unit tier offline."""
+
+    @property
+    def model_id(self) -> str: ...
+
+    async def transcribe(self, audio_path: str, language: str | None = None) -> Transcript: ...
+
+
+class FrameCaptioner(Protocol):
+    """Describes sampled frames: a caption, any on-screen text, and
+    whatever structured signals the caller's prompt asks for.
+
+    Takes the whole list of frames, not one at a time -- a single
+    batched call per asset is both cheaper and the reason §7.6 fits
+    inside a request-time budget."""
+
+    @property
+    def model_id(self) -> str: ...
+
+    async def caption(
+        self, frames: Sequence[FrameRef], instruction: str
+    ) -> list[FrameAnnotation]: ...
+
+
 class Chunker(Protocol):
     def chunk(self, document: ParsedDocument) -> list[Chunk]: ...
 
@@ -627,33 +758,45 @@ class Catalog(Protocol):
 
 ### Adapter table
 
-| Port             | Adapters                                                                      | Notes                                                          |
-| ---------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `Source`         | `file_source`, `excel_source`, `api_source`, `database_source`, `mock_source` | §7.1 maps these to the six required source types               |
-| `Sink`           | `object_store_sink`, `postgres_sink`                                          | both idempotent per partition                                  |
-| `ObjectStore`    | `fsspec_object_store`                                                         | one adapter covers local, MinIO, S3, R2, GCS                   |
-| `Validator`      | `pandera_validator`                                                           |                                                                |
-| `DocumentParser` | `docling_parser`, `pymupdf_parser`                                            | dispatch on `supports()`                                       |
-| `Chunker`        | `docling_chunker`                                                             |                                                                |
-| `Embedder`       | `fastembed_embedder`, `api_embedder`, `mock_embedder`                         | `mock_embedder` is deterministic so retrieval tests are stable |
-| `Retriever`      | `pgvector_retriever`, `lexical_retriever`, `hybrid_retriever`                 | `hybrid_retriever` composes the other two                      |
-| `Catalog`        | `postgres_catalog`                                                            |                                                                |
+| Port              | Adapters                                                                      | Notes                                                          |
+| ----------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `Source`          | `file_source`, `excel_source`, `api_source`, `database_source`, `mock_source` | §7.1 maps these to the required source types                   |
+| `Sink`            | `object_store_sink`, `postgres_sink`                                          | both idempotent per partition                                  |
+| `ObjectStore`     | `fsspec_object_store`                                                         | one adapter covers local, MinIO, S3, R2, GCS                   |
+| `Validator`       | `pandera_validator`                                                           |                                                                |
+| `DocumentParser`  | `docling_parser`, `pymupdf_parser`                                            | dispatch on `supports()`                                       |
+| `Transcriber`     | `gemini_transcriber`, `mock_transcriber`                                      | `faster-whisper` is the named local successor (§17)            |
+| `FrameCaptioner`  | `gemini_captioner`, `byteplus_captioner`, `mock_captioner`                    | BytePlus is a `base_url` swap if it stays OpenAI-compatible    |
+| `Chunker`         | `docling_chunker`                                                             |                                                                |
+| `Embedder`        | `fastembed_embedder`, `api_embedder`, `mock_embedder`                         | `mock_embedder` is deterministic so retrieval tests are stable |
+| `Retriever`       | `pgvector_retriever`, `lexical_retriever`, `hybrid_retriever`                 | `hybrid_retriever` composes the other two                      |
+| `Catalog`         | `postgres_catalog`                                                            |                                                                |
 
-`mock_source` and `mock_embedder` are not an afterthought — they are what make the unit tier of §16 possible.
+`mock_source`, `mock_embedder`, `mock_transcriber` and `mock_captioner` are not an afterthought — they are what make the unit tier of §16 possible. With the media work behind ports, `extract` is fully testable with no ffmpeg binary, no API key and no network.
+
+### What deliberately has no port: ffmpeg
+
+Frame sampling and audio extraction live in `infrastructure/media/ffmpeg.py` as plain functions — `extract_frames(path) -> list[FrameRef]` and `extract_audio(path) -> str` — with no `Protocol` over them.
+
+This follows the rule stated above rather than breaking it. A port earns its place where implementations are expected to change or where a fake is useful in a test. Neither applies: there will be one ffmpeg implementation, and a test that needs frames is better served by a directory of pre-extracted JPEGs than by a fake decoder. Adding a `MediaExtractor` protocol here would be an interface with one implementation forever, which is the exact anti-pattern the agent standard §4 names.
+
+The line between the two decisions is worth stating, because it is the useful part: **decoding is deterministic and local, so it needs no seam; understanding is a model call, so it needs one.**
 
 ---
 
-## 7. The five pipelines
+## 7. The six pipelines
 
 Mapping to the required `Source → Ingestion → Validation → Normalization → Storage → Feature/Analytics` flow:
 
-| Required stage      | Pipeline                                                           |
-| ------------------- | ------------------------------------------------------------------ |
-| Source, Ingestion   | `ingest` (§7.1)                                                    |
-| Validation          | the Bronze→Silver boundary in `normalize`, plus asset checks (§10) |
-| Normalization       | `normalize` (§7.2)                                                 |
-| Storage             | the layers of §3, written by each pipeline's sink                  |
-| Feature / Analytics | `model` (§7.3), and `index` (§7.4) for retrieval                   |
+| Required stage      | Pipeline                                                                    |
+| ------------------- | --------------------------------------------------------------------------- |
+| Source, Ingestion   | `ingest` (§7.1)                                                             |
+| Validation          | the Bronze→Silver boundary in `normalize`, plus asset checks (§10)          |
+| Normalization       | `normalize` (§7.2) for records, `extract` (§7.6) for media                  |
+| Storage             | the layers of §3, written by each pipeline's sink                           |
+| Feature / Analytics | `model` (§7.3), and `index` (§7.4) for retrieval                            |
+
+`extract` sits in the same position as `normalize` — both take one Bronze partition and produce contract-conforming Silver rows. They differ only in what the input bytes happen to be.
 
 ### 7.1 `ingest` — Source → Bronze
 
@@ -678,8 +821,11 @@ Mapping to the required `Source → Ingestion → Validation → Normalization �
 | REST API     | `api_source`      | dlt `rest_api_source` — declarative pagination, auth and incremental cursor                                                                                                                           |
 | Database     | `database_source` | dlt `sql_database` / `sql_table`; use the `pyarrow` backend for stable destination types                                                                                                              |
 | Documents    | see §7.4          | Docling; binary blobs land in Bronze unaltered, parsing happens in `index`                                                                                                                            |
+| **Media**    | `asset_source`    | Video, image and audio blobs land in Bronze unaltered under `assets/`; derivation happens in `extract` (§7.6). Files arriving through the upload path are registered by reference, not re-copied.     |
 
-**Documents land as blobs.** A PDF is copied byte-for-byte into Bronze and parsed later. Parsing is code, code has bugs, and the point of Bronze is that a parser bug costs a reprocess rather than a re-download.
+**Documents and media land as blobs.** A PDF or an MP4 is copied byte-for-byte into Bronze and processed later. Processing is code, code has bugs, and the point of Bronze is that a parser bug costs a reprocess rather than a re-download. For media the argument is stronger still: the re-fetch may be impossible, because the user uploaded the file once and moved on.
+
+**Uploaded media is registered, not copied.** The .NET backend writes the file into the shared upload directory (§4); `ingest` records the asset — its id, path, content hash, media type and arrival time — and treats that directory as a Bronze prefix. Copying a 150 MB file to prove a point about layering would double the disk and add a failure mode. What matters is that the bytes are never mutated afterwards, and that holds either way.
 
 **Incremental loading.** Where the source supports a cursor, `ingest` reads the last watermark from `Catalog`, requests only newer rows, and commits the new watermark _only after_ the write succeeds. Full reloads are acceptable while a dataset is small; §17 gives the trigger to stop doing that.
 
@@ -761,18 +907,51 @@ Three properties make this worth building as a pipeline instead of a notebook:
 
 **Labeled cases live in git, as JSONL.** Not in a database, not in a spreadsheet. Labels are source code: they get reviewed, they get diffed, and a change to them must be as visible as a change to the code they measure.
 
+### 7.6 `extract` — Bronze media → Silver derivations
+
+|                  |                                                                                                    |
+| ---------------- | -------------------------------------------------------------------------------------------------- |
+| **Input**        | one media blob in Bronze (video, image or audio)                                                   |
+| **Output**       | `silver/asset_artifact/event_date=…/`, plus frame JPEGs under `silver/frames/<asset_id>/`          |
+| **Engine**       | `imageio-ffmpeg` for decoding, then the `Transcriber` and `FrameCaptioner` ports                   |
+| **Partition**    | by asset — one asset is the unit of work                                                           |
+| **Idempotency**  | keyed on `sha256(blob) + extractor_version`; a repeat run over unchanged input performs no model call |
+| **Failure mode** | an undecodable or unanswerable asset goes to quarantine with its error; the run continues           |
+
+Steps, in order:
+
+1. Read the blob and compute its content hash.
+2. **Look up `(content_hash, extractor_version)`. On a hit, return the stored artifacts and stop.**
+3. Sample frames — `fps=1/2`, longest side 512, capped at 8. An image is its own single frame.
+4. Extract audio as mono 16 kHz WAV. Skip for a still image.
+5. Transcribe the audio through the `Transcriber` port.
+6. Caption all frames in **one** batched call through the `FrameCaptioner` port, asking for a caption, any on-screen text, and the structured signals the current business domain needs.
+7. Validate against the `asset_artifact` contract and write Silver, quarantining what fails.
+8. Record the derivation against its cache key, then record stats through `Catalog`.
+
+**Step 2 is the load-bearing one.** It is what makes `extract` cheap to re-run, safe to call from a request handler, and survivable when the model provider is unreachable — an asset processed once stays processed. It also makes the frame cap meaningful: eight frames is one request, so an asset costs a bounded, known amount exactly once.
+
+**`extract` returns text and numbers, and that is the whole design.** A transcript is text. A caption is text. On-screen text is text. Cut count and face presence are numbers. Everything downstream — contracts, quarantine, chunking, embedding, retrieval, SQL — is the machinery this platform already had, and none of it learns that a video existed. The alternative, carrying pixels down the stack, would have required a second embedding space, a second index and a second retrieval path; §12.4 records what that choice costs and where it breaks.
+
+**The extractor version is part of the key, not metadata.** It covers the prompt, the frame sampling parameters and the model ids. Changing any of them produces different artifacts, and artifacts from two different extractor versions must never be silently mixed — the same argument §7.4 makes for `embedder_model_id`. Bumping it invalidates the cache deliberately and costs a rebuild, which is affordable because Silver is derived from Bronze and Bronze still has the bytes.
+
+**Frame count is configuration, not a constant.** Eight is the default in `Settings`, chosen because it is one request and enough to see a 15-second video's structure. A two-minute walkthrough will want more. A hard-coded `8` in the pipeline breaks the first time someone uploads something longer, and breaks quietly.
+
 ---
 
 ## 8. Idempotency and recovery
 
 **Running any pipeline twice produces the same result as running it once.** Everything below exists to make that true, because it is what makes retries, backfills and recovery ordinary instead of frightening.
 
-| Layer  | Mechanism                                | Why this one                                    |
-| ------ | ---------------------------------------- | ----------------------------------------------- |
-| Bronze | append-only, `run_id` in the filename    | never mutate raw data; duplicates die in Silver |
-| Silver | `delete_prefix(partition)` then write    | one partition is the unit of atomicity          |
-| Gold   | `MERGE` on business key, one transaction | consumers must never see a half-built mart      |
-| Index  | upsert on content-hash chunk id          | re-embedding the same text is a no-op           |
+| Layer  | Mechanism                                        | Why this one                                          |
+| ------ | ------------------------------------------------ | ----------------------------------------------------- |
+| Bronze | append-only, `run_id` in the filename            | never mutate raw data; duplicates die in Silver       |
+| Silver | `delete_prefix(partition)` then write            | one partition is the unit of atomicity                |
+| Silver derivations | lookup on `content_hash + extractor_version` | a model call is expensive and may be unavailable |
+| Gold   | `MERGE` on business key, one transaction         | consumers must never see a half-built mart            |
+| Index  | upsert on content-hash chunk id                  | re-embedding the same text is a no-op                 |
+
+The third row generalises the others. Everywhere else in this table, idempotency protects correctness — running twice must not duplicate rows. For a derivation it also protects cost and availability, because the second run would otherwise re-spend money and re-depend on a network. Same principle, one more reason.
 
 ### Rules
 
@@ -871,9 +1050,13 @@ Bronze ──▶ [structural checks] ──▶ Silver staging ──▶ [full su
 | Layer  | Checks                                                                                         | Cost             |
 | ------ | ---------------------------------------------------------------------------------------------- | ---------------- |
 | Bronze | is it readable, non-empty, roughly the expected volume, did the schema drift                   | cheap, every run |
+| Bronze assets | does the file decode, is it under the size limit, is the media type one we handle        | cheap, every run |
 | Silver | the full contract — types, nullability, uniqueness, ranges, referential integrity              | the main suite   |
+| Silver derivations | frame count matches what was requested, transcript is not empty for a video with an audio track, every annotation has a caption | per asset |
 | Gold   | dbt tests — `unique`, `not_null`, `relationships`, `accepted_values`, plus business assertions | on rebuild       |
 | Index  | chunk count per document non-zero, embedding dimensions match `Embedder.dimensions`            | on rebuild       |
+
+**An empty transcript is a finding, not a fact.** A silent video legitimately has none; a video with an audio track that transcribes to nothing means the audio extraction failed or the model refused. Distinguishing the two costs one check and prevents a whole class of confidently wrong analysis downstream.
 
 **Running checks only on Gold is the classic mistake**: by the time Gold fails, everything upstream is already contaminated and you cannot tell how far back.
 
@@ -911,11 +1094,24 @@ Quality gates are expressed as Dagster **asset checks** — `@asset_check(blocki
 
 ---
 
-## 11. The serving contract to the backend
+## 11. The serving contracts
 
-The backend is .NET 8 + FastEndpoints and cannot import Python. **Postgres is the contract surface.** The data layer writes; the backend reads SQL. No Python service sits between them, so there is nothing extra to deploy and nothing extra to fail.
+This layer has two consumers with incompatible needs, and therefore two surfaces.
 
-### Versioned views are the actual interface
+| Consumer | Reads | Surface | Specified in |
+| --- | --- | --- | --- |
+| .NET 8 backend | rows | `api.v1_*` views over SQL | §11.1–§11.3 |
+| `agent/` layer | documents and asset artifacts | HTTP JSON on `:8002` | §11.4 |
+
+**Version 1.0 said "no Python service sits between them," and that sentence stays true where it was aimed.** It was written when the backend was the only consumer, and it still governs that path: nothing sits between .NET and Postgres. It was never a claim that the data layer may not expose an API — and the agent layer cannot use the SQL surface, because [agent-architecture-standard.md](../docs/architecture/agent-architecture-standard.md) forbids `domain/` from importing a database driver, and [integration-architecture.md](../docs/architecture/integration-architecture.md) forbids pods from sharing code. HTTP is the only remaining option, and it is the one that document already specifies.
+
+Scoped precisely: **Postgres is the contract surface for the .NET backend. The FastAPI process serves the agent, and sits between the agent and Postgres — never between the backend and Postgres.**
+
+### 11.1 The backend's contract
+
+The backend is .NET 8 + FastEndpoints and cannot import Python. The data layer writes; the backend reads SQL.
+
+### 11.2 Versioned views are the actual interface
 
 ```
 gold.dim_customer          ← internal, refactor freely
@@ -936,20 +1132,64 @@ api.v1_order_daily         ← additive changes only
 
 The last row is what makes this hold. A convention the backend _could_ bypass eventually gets bypassed at 2am; a permission it _cannot_ bypass stays a boundary.
 
-### Keeping DTOs in sync
+### 11.3 Keeping DTOs in sync
 
 `contract_service` exports every `api.v1_*` shape to `contracts/jsonschema/`. The .NET side generates or hand-writes DTOs against those files. A contract change is then a reviewable diff in a shared file rather than a runtime surprise.
 
 ### Postgres schemas
 
-| Schema  | Contents                                | Backend access |
-| ------- | --------------------------------------- | -------------- |
-| `gold`  | published marts                         | none           |
-| `index` | chunks, embeddings                      | none           |
-| `api`   | versioned views                         | `SELECT`       |
-| `ops`   | watermarks, run log, quality violations | none           |
+| Schema  | Contents                                       | Backend access |
+| ------- | ---------------------------------------------- | -------------- |
+| `gold`  | published marts                                | none           |
+| `index` | chunks, embeddings                             | none           |
+| `asset` | asset registry, derivations, the extract cache | none           |
+| `api`   | versioned views                                | `SELECT`       |
+| `ops`   | watermarks, run log, quality violations        | none           |
 
 Silver deliberately does not appear: it stays in object storage. Postgres holds only what is served or operational, which keeps the serving database small and fast.
+
+### 11.4 The data service — the agent's contract
+
+A thin FastAPI application on port `8002`, matching the pod topology in [integration-architecture.md](../docs/architecture/integration-architecture.md) §3. It holds no state, owns no data, and does two things: read Postgres, and call pipeline functions.
+
+**Four handlers. The response shape is dictated, not chosen.** `agent/infrastructure/retrieval/http_json_retriever.py` already exists as a generic REST-JSON adapter for the agent's `Retriever` port, with an injectable response mapper. Emitting what it already parses means the agent side needs a four-line mapping function and no new adapter, no new port, and no change under `agent/domain/`.
+
+```
+GET  /health
+     → {"status":"ok","db":true,"assets":12}
+
+GET  /api/v1/data/query?q=<text>&top_k=5
+POST /api/v1/data/query          {"q":"<text>","top_k":5}
+     → {"items":[
+          {"id":     "asset:VID-20260821-0007:frame:07",
+           "text":   "Frame at 7s: hand holding the product, on-screen text 'GIAM 50%'",
+           "score":  0.83,
+           "metadata":{"asset_id":"VID-20260821-0007",
+                       "kind":"frame_caption",
+                       "t_seconds":7,
+                       "source_uri":"s3://…/frames/VID-20260821-0007/07.jpg"}}
+        ]}
+
+POST /api/v1/assets              {"uri":"/uploads/videos/x.mp4","kind":"video"}
+     → {"asset_id":"VID-20260821-0007","status":"ready","cached":false,
+        "artifacts":{"frames":8,"duration_s":15.2,"has_transcript":true}}
+
+GET  /api/v1/assets/{asset_id}
+     → {"asset_id":"…","kind":"video","duration_s":15.2,
+        "transcript":"…",
+        "frames":[{"t":0,"caption":"…","ocr_text":"…"}],
+        "signals":{"cut_count":9,"has_face":true,"text_overlay_ratio":0.4}}
+```
+
+**The query endpoint answers both GET and POST, on one handler.** The existing agent adapter issues a `GET` with `q` and `top_k` as query parameters; [integration-architecture.md](../docs/architecture/integration-architecture.md) §4.2 specifies `POST /api/v1/data/query`. Both are correct, the disagreement is not worth a negotiation, and satisfying both costs one extra route decorator over the same function.
+
+**`POST /api/v1/assets` is synchronous.** It runs `extract` and returns when the artifacts exist — typically a few seconds, and free on a cache hit. No queue, no job id, no polling endpoint, no status machine. This fits inside the 30–60 second budget [integration-architecture.md](../docs/architecture/integration-architecture.md) §4.3 already allocates for a backend-to-AI call, and every one of those omitted mechanisms is a component that can fail during a demo.
+
+**It receives a path, never bytes.** See §4: the upload directory is a shared volume.
+
+**Two endpoints, two agent ports.** `/data/query` backs the agent's `Retriever` — "what do we know about this topic." `/assets/{id}` backs a `Tool` — "give me the artifacts for this asset." These are different questions and should not be merged: an asset id forced through a text-similarity query is a lookup pretending to be a search, and it will occasionally return the wrong asset.
+
+**Endpoints deliberately not built.** [integration-architecture.md](../docs/architecture/integration-architecture.md) §4.2 sketches `GET /api/v1/policy-rules` and `GET /api/v1/channel-history/{id}`. Both are `/data/query` with a different `q`. One general endpoint that the retrieval layer already serves beats three specific ones that each need their own handler, their own DTO and their own test.
 
 ---
 
@@ -1001,6 +1241,27 @@ Consequences, both directions:
 - Changing that shape is a cross-layer breaking change and follows §9's rules.
 - The agent never imports `psycopg` or `pgvector`, and never learns that retrieval is hybrid. Swapping the index for a different store is invisible to it.
 
+`metadata` is `dict[str, Any]`, which is the pressure valve: a new field on a media chunk — timestamp, frame path, risk label — travels to the agent without a contract change on either side.
+
+### 12.4 Media enters the same index, as text
+
+A frame becomes a caption; a caption is text. Video, image and audio therefore share one index, one embedding model and one retrieval path with every document in the system. The `Embedder` port is unchanged, the vector space is single, and a query can return a PDF paragraph and a video frame ranked against each other.
+
+The alternative was a multimodal embedding model — CLIP or similar — putting pixels and text in a shared space directly. Rejected for now, deliberately:
+
+| | Captions as text | Multimodal embeddings |
+| --- | --- | --- |
+| Vector spaces | one | two, or one much larger model |
+| Retrieval path | the existing hybrid query | a second path to build and tune |
+| What is matched | what the model *says* is in the frame | what the frame *looks* like |
+| Extra cost | none — the caption is already needed for the agent | a second model, a second index, a second eval |
+
+**Where this breaks, stated plainly.** Caption similarity is topical similarity. Two creatives that are visually different but describable the same way — two white t-shirts with different graphics, two ads for the same product with different pacing — will collide. For search and analysis this is usually acceptable and sometimes preferable. For **near-duplicate detection over a large catalog it is not**, and anyone reporting deduplication quality on this index should say so.
+
+The escape hatch is not CLIP. A perceptual hash (`imagehash.phash`) stored as a `bigint` beside the chunk gives exact near-duplicate detection through a Hamming-distance comparison in SQL, at the cost of one dependency and one column. §17 records the trigger for adding it, and the separate, larger trigger for genuine multimodal embeddings — which is an eval showing caption retrieval losing, not an intuition that it might.
+
+Two structural properties keep this reversible: the Index is derived and rebuildable from Silver (§3), and `Embedder` is a port (§6). Reversing the decision costs one adapter and one rebuild, not a migration.
+
 ---
 
 ## 13. Observability
@@ -1035,9 +1296,20 @@ duration_ms, engine
 watermark_from, watermark_to
 ```
 
+For a `extract` run, four more (§7.6):
+
+```
+asset_id, content_hash, extractor_version, cache_hit
+transcriber_model_id, captioner_model_id, frame_count
+```
+
+`cache_hit` is the one to watch. A cache hit rate that collapses means the extractor version is churning or the same asset is arriving under different bytes, and both are cost problems that are otherwise invisible until the bill arrives.
+
 ### Never log
 
 API keys, connection strings, full record payloads, or any column classified `pii`. Log the **count** of bad rows and a violation code; the rows themselves belong in quarantine, which is access-controlled. Logs are the easiest place to turn a data layer into a leak.
+
+**Transcripts and captions count as payload.** A transcript is a verbatim record of what someone said and routinely contains names, addresses and phone numbers; a caption may describe an identifiable person. Log the character count and the model id, never the text — the same rule as any other record payload, and worth stating because a transcript does not look like a database row and the rule gets forgotten.
 
 ### The four detectors
 
@@ -1075,6 +1347,8 @@ Dagster's asset graph is the lineage graph — it is derived from the code, so i
 | Test data                  | synthetic, or a masked sample; never a production dump, and never in CI logs                                                                         |
 | Retention                  | Bronze per policy, Silver aligned to Bronze, quarantine 90 days, Index rebuildable so retention is irrelevant                                        |
 | Right to erasure           | a keyed delete against Silver plus a Gold rebuild plus an Index rebuild; Bronze handled per its retention policy                                     |
+| Uploaded media             | classify at registration, never after. A user video is `confidential` by default: it may contain identifiable people, and it was uploaded for one purpose |
+| Media leaving the machine  | frames and audio are sent to a hosted model (§4). Say so in the privacy notice, and keep the local-model successor in §17 open as the answer when a customer objects |
 
 **Every dataset has exactly one owner**, recorded in its contract. A dataset owned by everyone is maintained by no one and becomes the on-call's problem eventually.
 
@@ -1098,6 +1372,46 @@ partition_col = ingested_date (bronze) | event_date (silver)
 s3://bi-data-prod/bronze/erp/orders/ingested_date=2026-08-12/part-a1b2c3-0.parquet
 s3://bi-data-prod/silver/orders/event_date=2026-08-11/part-a1b2c3-0.parquet
 ```
+
+### Media assets and their derivations
+
+```
+s3://bi-data-<env>/bronze/assets/<kind>/ingested_date=<value>/<asset_id>.<ext>
+s3://bi-data-<env>/silver/frames/<asset_id>/<index>.jpg
+
+kind          ∈ {video, image, audio}
+asset_id      = <PREFIX>-<YYYYMMDD>-<discriminator>     VID · IMG · AUD · DOC
+discriminator = 6 hex characters
+index         = the frame's zero-padded ordinal, not its timestamp
+```
+
+```
+s3://bi-data-prod/bronze/assets/video/ingested_date=2026-08-21/VID-20260821-a1b2c3.mp4
+s3://bi-data-prod/silver/frames/VID-20260821-a1b2c3/03.jpg
+```
+
+The asset id carries its arrival date so a directory listing sorts usefully, and the frames of one asset live together so deleting an asset's derivations is a prefix delete. Frames are numbered by ordinal rather than timestamp because the sampling rate is configuration (§7.6) and a filename that encodes it becomes wrong when it changes.
+
+**The discriminator is derived, never a counter.** A sequence number requires a per-kind-per-day counter — extra state, and non-deterministic under retry, so the same file re-processed gets a second id and a second copy. Two derivations, in order of preference:
+
+| Situation | Discriminator |
+| --- | --- |
+| The caller supplied an id | its own trailing entropy — the backend's `ANL-20260821103000-a1b2c3` becomes `VID-20260821-a1b2c3` |
+| No caller id | `sha256(bytes)[:6]` |
+
+Both are deterministic, so a retry produces the same id and the same object path. The caller's original identifier is kept in `asset.asset.external_refs` so the backend can be answered in its own vocabulary, and `UNIQUE(content_hash)` catches genuine duplicate uploads that a random id would silently admit.
+
+**One identifier crosses the whole system.** The alternative — data minting its own id and storing the caller's as a foreign reference — means two ids for the same file in every log line, trace and support conversation. Reusing the caller's entropy costs nothing and removes that translation.
+
+### Chunk and cache ids
+
+```
+chunk id       <asset_id>:<kind>:<ordinal>     VID-20260821-0007:frame_caption:03
+                                               VID-20260821-0007:transcript:00
+extract cache  (content_hash, extractor_version)
+```
+
+The chunk id appears in the `id` field of the API response (§11.4), so it must be stable across a re-index and readable in a log line.
 
 ### Postgres
 
@@ -1149,7 +1463,7 @@ Four tiers. The first three are ordinary software testing; the fourth exists bec
 tests/
 ├── unit/          # no network, no DB, no files -- mock adapters. Milliseconds.
 ├── integration/   # real DuckDB, real Postgres in Docker, real MinIO
-├── e2e/           # one partition through all five pipelines
+├── e2e/           # one partition through every pipeline
 └── (evaluation/)  # lives in evaluation/, run as an asset -- see §7.5
 ```
 
@@ -1181,6 +1495,11 @@ Every row here is a real ceiling with a real successor. **The trigger column exi
 | `dagster dev`                   | multiple concurrent users, or scheduled runs must survive a laptop closing             | Dagster deployed as a container, then on K8s                                             |
 | Local `ops` tables              | lineage needed across teams and tools                                                  | OpenLineage emission into a catalog                                                      |
 | Postgres as the analytics store | analytical queries start competing with serving queries                                | A dedicated columnar warehouse; Postgres keeps only `api`                                |
+| Hosted transcription (§4)       | the network dependency becomes unacceptable, Vietnamese transcript quality is the binding constraint, or a customer refuses to let audio leave the machine | `faster-whisper` (base, int8, CPU) behind the existing `Transcriber` port — no torch, ~150 MB of weights baked into the image |
+| Captions as the only media signal (§12.4) | an eval **shows** caption retrieval losing to visual similarity — an intuition is not the trigger | A multimodal embedding model, accepting a second vector space and a second retrieval path |
+| No perceptual hashing           | near-duplicate detection over a catalog becomes a requirement                          | `imagehash.phash` as a `bigint` column, Hamming distance in SQL — one dependency, one column |
+| Synchronous `POST /assets` (§11.4) | extraction on real assets starts exceeding the caller's timeout                     | A job id and a polling endpoint, then a real queue — in that order, and not before        |
+| Request-time over one asset     | a consumer's value genuinely depends on continuous analysis of a live stream           | Segment the stream into bounded chunks and keep calling `extract`; a streaming engine only if that proves insufficient |
 
 **Record why, when you do it.** Each of these is an architecture decision worth a short ADR in `docs/decisions/`. The architecture in this document is an engineering hypothesis, not a permanent truth — and the reasoning behind a change is more valuable later than the change itself.
 
@@ -1197,8 +1516,10 @@ def build_resources(settings: Settings) -> dict[str, object]:
     store = FsspecObjectStore(settings.object_store_url, settings.object_store_credentials)
     catalog = PostgresCatalog(settings.database_url)
     validator = PanderaValidator()
-    embedder = create_embedder(settings)      # fastembed | api | mock
-    parser = create_parser(settings)          # docling | pymupdf
+    embedder = create_embedder(settings)          # fastembed | api | mock
+    parser = create_parser(settings)              # docling | pymupdf
+    transcriber = create_transcriber(settings)    # gemini | mock
+    captioner = create_captioner(settings)        # gemini | byteplus | mock
 
     return {
         "store": store,
@@ -1206,6 +1527,8 @@ def build_resources(settings: Settings) -> dict[str, object]:
         "validator": validator,
         "embedder": embedder,
         "parser": parser,
+        "transcriber": transcriber,
+        "captioner": captioner,
         "retriever": HybridRetriever(
             dense=PgVectorRetriever(settings.database_url, embedder),
             lexical=LexicalRetriever(settings.database_url),
@@ -1214,29 +1537,40 @@ def build_resources(settings: Settings) -> dict[str, object]:
     }
 ```
 
-If `DuckDBEngine(...)` or `FastEmbedEmbedder(...)` appears anywhere else, the layer has grown a hidden dependency.
+If `DuckDBEngine(...)`, `FastEmbedEmbedder(...)` or `GeminiCaptioner(...)` appears anywhere else, the layer has grown a hidden dependency.
+
+**Both edges share this one function.** `orchestration/definitions.py` passes the result to Dagster as resources; `interface/api/app.py` builds it once at startup and holds it on the app state. Two edges, two frameworks, one composition root — if the API grows its own way of constructing a captioner, the rule is already broken.
 
 ### First cut — build only this
 
 ```
-one Source (the simplest real one)
+one media asset (a short video)
         ↓
-ingest ──▶ Bronze
+ingest ──▶ Bronze assets/       register by reference, content hash
         ↓
-normalize ──▶ Silver        + one Pandera contract
-        ↓                   + one blocking asset check
-model ──▶ one Gold table
+extract ──▶ Silver              ffmpeg → Transcriber → FrameCaptioner
+        ↓                       + one Pandera contract
+        ↓                       + the content-hash cache
+index ──▶ Index                 chunks + embeddings in pgvector
         ↓
-api.v1_<name> view          + JSON Schema export
+GET /api/v1/data/query          the shape of §11.4
+        ↓
+HttpJsonRetriever               returns list[RetrievedDocument], agent unchanged
 ```
 
-Plus: `Settings`, structured logging, `mock_source`, and one unit test per policy. That is a complete vertical slice — it exercises every layer boundary in the architecture, which is the only way to find out whether the boundaries are right.
+Plus: `Settings`, structured logging, and the mock adapters — `mock_transcriber`, `mock_captioner`, `mock_embedder` — so the whole slice runs in a unit test with no network and no containers.
+
+**The first slice is a media slice, and that is a deliberate change from version 1.0.** A CSV slice through `normalize` and `model` would exercise the same boundaries, but it would prove them for the input type that is easiest and postpone the one that is hardest. The media path has every unknown in it: a system binary, two model calls, a cache, and a cross-layer HTTP contract. Finding out on the last day that one of those does not fit is the failure worth spending the first day preventing.
+
+The structured path — `normalize`, `model`, dbt, `api.v1_*` — is built second, over boundaries the media slice has already proven.
 
 ### Do not build yet
 
-Deliberately deferred until a real need appears, in roughly this order: the second source type · the Index pipeline · the eval harness · dbt (raw SQL in one model is fine at first) · quarantine reprocessing · the four detectors · Iceberg · anything in §17.
+Deliberately deferred until a real need appears, in roughly this order: the second source type · the eval harness · dbt (raw SQL in one model is fine at first) · quarantine reprocessing · the four detectors · perceptual hashing · Iceberg · anything in §17.
 
-**Build breadth only after the first slice works end to end.** Five half-built pipelines teach you nothing about whether the design holds; one complete one teaches you everything.
+**Build breadth only after the first slice works end to end.** Six half-built pipelines teach you nothing about whether the design holds; one complete one teaches you everything.
+
+The schedule that turns this into dated work is in [implementation-plan.md](implementation-plan.md).
 
 ---
 
@@ -1245,10 +1579,11 @@ Deliberately deferred until a real need appears, in roughly this order: the seco
 Architecture:
 
 - [ ] `domain/` imports no framework, driver or SDK (§2)
-- [ ] Every pipeline in `application/pipelines/` is callable with no `dagster` import (§2)
-- [ ] Concrete implementations are named only in `orchestration/resources.py` (§18)
+- [ ] Every pipeline in `application/pipelines/` is callable with no `dagster` and no `fastapi` import (§2)
+- [ ] Concrete implementations are named only in `orchestration/resources.py`, and both edges use it (§18)
 - [ ] Every significant boundary has a `Protocol` port; interfaces are not created for their own sake (§6)
-- [ ] Config comes from `Settings` — no hard-coded paths, URLs, thresholds or model names (§10)
+- [ ] `interface/api/` returns DTOs, never domain entities (§2, §11.4)
+- [ ] Config comes from `Settings` — no hard-coded paths, URLs, thresholds, frame counts or model names (§7.6, §10)
 
 Data correctness:
 
@@ -1272,10 +1607,21 @@ Quality and contracts:
 
 Serving and retrieval:
 
-- [ ] The backend reads only `api.v1_*`, enforced by its DB grant (§11)
+- [ ] The backend reads only `api.v1_*`, enforced by its DB grant (§11.1)
 - [ ] `Retriever` output stays compatible with the agent layer's `RetrievedDocument` (§12.3)
+- [ ] `/api/v1/data/query` answers both GET and POST from one handler (§11.4)
 - [ ] `embedder_model_id` is part of the index key (§7.4)
 - [ ] Index is fully rebuildable from Silver (§3)
+
+Media:
+
+- [ ] Media blobs land in Bronze unaltered and are never mutated (§3, §7.1)
+- [ ] Media bytes never cross a pod boundary over HTTP — pass the path (§4, §11.4)
+- [ ] Every derivation is keyed on `content_hash + extractor_version` (§7.6)
+- [ ] `extractor_version` covers the prompt, sampling parameters and model ids (§7.6)
+- [ ] `extract` runs in a unit test with mock adapters — no ffmpeg, no API key, no network (§6, §16)
+- [ ] Transcripts and captions are never logged, only their length (§13)
+- [ ] Uploaded media is classified at registration, not later (§14)
 
 Operations:
 
