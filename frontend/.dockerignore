@@ -1,0 +1,25 @@
+# Bỏ qua thư viện máy host
+node_modules
+
+# Bỏ qua các file build cũ của Nuxt
+.nuxt
+.output
+dist
+
+# Bỏ qua file môi trường & bí mật
+.env
+.env.*
+!.env.example
+
+# Bỏ qua lịch sử Git và file rác của hệ thống/IDE
+.git
+.gitignore
+.vscode
+.idea
+*.log
+
+# Bỏ qua file Docker (không cần đưa vào container)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+README.md
