@@ -1,6 +1,11 @@
 <script setup>
+const title = 'Nuxt Boilerplate'
+const description = 'Enterprise AI Video Intelligence & Auto-Mitigation Workspace'
+
 useHead({
+  titleTemplate: '%s — SentraLoop AI',
   meta: [
+    { name: 'description', content: description },
     { name: 'viewport', content: 'width=device-width, initial-scale=1' }
   ],
   link: [
@@ -10,9 +15,6 @@ useHead({
     lang: 'en'
   }
 })
-
-const title = 'Nuxt Boilerplate'
-const description = 'A production-ready starter template powered by Nuxt UI. Build beautiful, accessible, and performant applications in minutes, not hours.'
 
 useSeoMeta({
   title,
