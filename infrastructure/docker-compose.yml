@@ -1,0 +1,16 @@
+services:
+  backend:
+    image: duytrong298/be-beyond-intelligence:demo-v1.0
+    container_name: beyond_backend
+    ports: ["8000:8000"]
+    environment:
+      - AI_SERVICE_URL=http://ai:8001
+      - DATA_SERVICE_URL=http://data:8002
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+networks:
+  default:
+    name: beyond-intelligence-net
