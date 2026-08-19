@@ -1,65 +1,82 @@
 <script setup lang="ts">
-const links = [
-  { label: 'Home', to: '/' },
-  { label: 'Demo', to: '/demo' },
-  { label: 'Dashboard', to: '/dashboard' },
-  { label: 'Decision', to: '/decision' }
-]
+// State quản lý cờ Demo Mode (Mock API vs Live .NET 8 Backend)
+const { isDemoMode } = useEngineApi()
+const colorMode = useColorMode()
+
+const toggleColorMode = () => {
+  colorMode.preference = colorMode.value === 'dark' ? 'light' : 'dark'
+}
 </script>
 
 <template>
-  <div class="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(0,209,130,0.18),transparent_40%),linear-gradient(135deg,rgba(255,255,255,0.95),rgba(243,250,247,0.9))] text-gray-900 transition-colors duration-300 dark:bg-[radial-gradient(circle_at_top_left,_rgba(0,209,130,0.2),_transparent_40%),linear-gradient(135deg,rgba(6,15,24,0.98),rgba(3,10,18,0.95))] dark:text-white">
-    <UHeader>
-      <template #title>
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-sparkles" class="text-primary" />
-          <span class="font-semibold tracking-tight">AI Hackathon Starter</span>
-        </div>
-      </template>
-
-      <nav class="hidden items-center gap-6 text-sm font-medium md:flex">
-        <NuxtLink v-for="item in links" :key="item.to" :to="item.to" class="transition-colors hover:text-primary">
-          {{ item.label }}
+  <div class="min-h-screen bg-surface text-default flex flex-col font-sans antialiased">
+    <!-- Top Enterprise Header -->
+    <header class="h-16 border-b border-muted bg-elevated/80 backdrop-blur-md sticky top-0 z-40 px-4 sm:px-6 flex items-center justify-between">
+      <!-- Brand Logo -->
+      <div class="flex items-center gap-6">
+        <NuxtLink to="/" class="flex items-center gap-2.5 focus:outline-none">
+          <div class="size-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-xs">
+            <UIcon name="i-lucide-sparkles" class="size-5" />
+          </div>
+          <div class="flex flex-col">
+            <span class="font-bold text-highlighted text-base leading-tight tracking-tight">SentraLoop AI</span>
+            <span class="text-[10px] text-muted font-mono tracking-wider">VIDEO INTELLIGENCE</span>
+          </div>
         </NuxtLink>
-      </nav>
 
-      <template #right>
-        <UColorModeButton />
-        <UButton label="Open demo" to="/demo" />
-      </template>
-
-      <template #body>
-        <nav class="flex flex-col gap-3 text-sm font-medium">
-          <NuxtLink v-for="item in links" :key="item.to" :to="item.to" class="transition-colors hover:text-primary">
-            {{ item.label }}
-          </NuxtLink>
+        <!-- Navigation Links -->
+        <nav class="hidden md:flex items-center gap-1">
+          <UButton
+            to="/"
+            variant="ghost"
+            color="neutral"
+            size="sm"
+            label="Intelligence Workspace"
+            icon="i-lucide-layout-dashboard"
+          />
+          <UButton
+            to="/scan"
+            variant="ghost"
+            color="neutral"
+            size="sm"
+            label="Scanning Studio"
+            icon="i-lucide-scan-line"
+          />
         </nav>
-      </template>
-    </UHeader>
+      </div>
 
-    <UMain>
-      <UContainer class="py-6 md:py-10">
-        <slot />
-      </UContainer>
-    </UMain>
+      <!-- Right Actions: Demo Mode Toggle, Channel, Theme -->
+      <div class="flex items-center gap-3">
+        <!-- Demo-Proof Resilience Switcher -->
+        <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted/40 border border-muted">
+          <UIcon
+            :name="isDemoMode ? 'i-lucide-shield-check' : 'i-lucide-server'"
+            :class="isDemoMode ? 'text-amber-500' : 'text-emerald-500'"
+            class="size-4"
+          />
+          <span class="text-xs font-medium text-highlighted">
+            {{ isDemoMode ? 'Mock API (Demo Mode)' : '.NET 8 Live API' }}
+          </span>
+          <USwitch v-model="isDemoMode" size="sm" />
+        </div>
 
-    <UFooter>
-      <template #left>
-        <p class="text-sm text-muted">
-          Built with Nuxt UI • © {{ new Date().getFullYear() }}
-        </p>
-      </template>
-
-      <template #right>
         <UButton
-          to="https://github.com/nuxt-ui-templates/starter"
-          target="_blank"
-          icon="i-simple-icons-github"
-          aria-label="GitHub"
+          :icon="colorMode.value === 'dark' ? 'i-lucide-moon' : 'i-lucide-sun'"
           color="neutral"
           variant="ghost"
+          size="sm"
+          @click="toggleColorMode"
         />
-      </template>
-    </UFooter>
+
+        <div class="size-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-primary font-bold text-xs">
+          SL
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Workspace Content -->
+    <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+      <slot />
+    </main>
   </div>
 </template>
