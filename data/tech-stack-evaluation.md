@@ -11,6 +11,127 @@
 
 ---
 
+## Reversals recorded in architecture 3.0
+
+This document exists so a settled question is not silently re-opened. Version 3.0
+of [data-architecture.md](data-architecture.md) re-opens two, and both are
+recorded here as reversals rather than quietly applied — the same way §11 records
+the structlog reversal.
+
+### Reversal 1 — dbt is removed (§6)
+
+§6 chose `dbt-core` over SQLMesh and raw SQL, on team fluency under a short
+timeline, with dbt tests doubling as §10's quality gates and the manifest
+supplying §13's SQL lineage. **Withdrawn.** SQL transformations are now plain
+`.sql` files executed by DuckDB, with every dbt responsibility moved to something
+already present:
+
+| §6 relied on dbt for | 3.0 uses |
+| --- | --- |
+| `ref()` ordering | Dagster asset `deps=[...]` |
+| model contracts | Delta schema enforcement on write, plus Pandera |
+| dbt tests as quality gates (§8, §10) | Pandera on the Arrow result, plus `@asset_check` |
+| the manifest, for lineage (§11) | the Dagster asset graph, plus Delta `history()` |
+
+**Because** six datasets do not need a modelling framework: the toolchain
+(`dbt-core`, `dbt-duckdb`, `dagster-dbt`, `dbt_project.yml`, `profiles.yml`,
+`schema.yml`) costs more to set up and learn than eight lines of Python running
+`.sql` files. **What is genuinely lost:** Jinja macros, column-level lineage, and
+tests running inline with their models. §6's own closing line anticipated this —
+*"one raw SQL model is fine until there is a second one to depend on it"* — and
+architecture §16 names the trigger to reverse back: roughly a dozen models, or
+real macro reuse.
+
+### Reversal 2 — Delta Lake replaces plain Parquet (§7, §13)
+
+§7 chose plain Parquet partitions with **Iceberg** as the designated upgrade, and
+§13 rejected **Delta Lake** outright. **Both withdrawn.** Delta Lake, via
+`deltalake` (delta-rs), is now the table format for every layer.
+
+§7's reasoning was that nothing needed ACID, `MERGE` or time travel — one writer
+per dataset, Bronze append-only, Silver overwriting whole partitions, Gold
+`MERGE`ing into Postgres which already has transactions. **That reasoning had a
+gap:** the media pipeline's unit of work is one asset inside a shared partition,
+which is a row-level upsert wearing a disguise. Version 2.0 worked around it with
+a per-asset object and a rule never to `delete_prefix` a date; 3.0 deletes the
+workaround and uses `MERGE`.
+
+Delta over Iceberg, on the two criteria §7 itself set:
+
+| | Delta (delta-rs) | Iceberg (pyiceberg) |
+| --- | --- | --- |
+| Criterion 1, lightweight | a Python/Rust library, **no catalog service** | needs a REST catalog — a third container in the demo path |
+| Criterion 7, no JVM | Rust and Python | Rust and Python |
+| Reads from DuckDB | `delta_scan` | `iceberg_scan` |
+| Writes from Polars | `write_delta`, first-class | via pyiceberg, less direct |
+
+**What Delta buys, stated accurately:** row-level `MERGE`, atomic single-commit
+writes, schema enforcement, and time travel. **What it does not buy here:**
+multi-writer ACID. Polars writes `asset_artifact` and `document_chunk`; DuckDB
+writes `stg_*` and the marts — different tables, one writer each. Neither this
+document nor the architecture claims otherwise.
+
+§7's flagged one-way door survives intact: the path layout was fixed up front
+precisely so a table format could be adopted later as a metadata operation. That
+is what made this reversal cheap, and it is the strongest evidence in this
+document that recording a one-way door early pays off.
+
+**Everything else in §7 stands** — Parquet + zstd is still the file format
+underneath Delta, and object storage is still MinIO locally, S3-compatible in
+cloud.
+
+### Consequences for the pins (§14)
+
+| Change | Package |
+| --- | --- |
+| Removed | `dbt-core`, `dbt-duckdb`, `dagster-dbt` |
+| Added | `deltalake` (delta-rs), and dlt's `deltalake` extra |
+| Now actually used | `dagster-dlt`, `dagster-duckdb` — pinned since 1.1, unused until 2.0 |
+| Promoted from anticipated to direct | `fastexcel`, for the Excel gap §4 documents |
+
+The unverified-package discipline of §14 now also covers dlt's Delta table format,
+DuckDB's `delta_scan`, and `DeltaTable.merge`. All three are checked by
+[implementation-plan.md](implementation-plan.md) §10, each with a named fallback.
+
+---
+
+## Note for readers of architecture 2.0
+
+[data-architecture.md](data-architecture.md) reached version 2.0 by removing the
+ports-and-adapters layer this document was written against. **No tool choice below
+was reversed by that change** — Dagster, dlt, Polars, DuckDB, dbt, Pandera,
+Pydantic, Docling, fastembed, pgvector, FastAPI, `imageio-ffmpeg` and Gemini were
+all still the selected tools, for the reasons given here. Only the code wrapped
+around them was gone. (dbt and the table format were then reversed in 3.0, above.)
+
+What *is* affected is **criterion 6, "swappable behind a port"** (§1), and the
+passages that lean on it. Read those as making a claim about *narrow
+interfaces*, not about `Protocol` classes specifically:
+
+| Where | Reads as, under 2.0 |
+| --- | --- |
+| §1 criterion 6, and "criterion 6 is the one that lowers the cost of being wrong" | Retired as a criterion. What made these decisions cheap to reverse was that each tool is reached from few places — a property of the tool, not of a wrapper around it |
+| §4 "Sling … cannot sit behind a Python port cleanly" | Still disqualifying: a Go binary cannot be a dlt source or a Dagster asset either |
+| §4 "dlt … sits behind a `Source` port" · §7 "`ObjectStore` port means even fsspec is replaceable" · §8 "a `Validator` adapter can call" · §9 "the same `DocumentParser` port" · §10 "an `Embedder` port" | The tool is now called directly. The *replaceability* claim survives, because each is used from one or two files |
+| §11 "the ports in §6 only pay off if `Protocol` conformance is actually checked" | The argument for mypy/pyright is weaker now. Type checking is still worth having; it is no longer load-bearing |
+| §12 the port inventory, and "most decisions above are cheap to reverse because §6's ports confine each tool to one adapter" | The three genuinely expensive decisions in §12 are unchanged: the object-storage path layout, Postgres as the serving contract, and media understood as text rather than pixels |
+
+§12 already contained the argument that 2.0 acted on, about the one component
+that never had a port:
+
+> "Media decoding is cheap to reverse despite having no port … **this is the
+> case that shows a `Protocol` was never what made a decision reversible — a
+> narrow interface did, and two functions are narrower than a protocol.**"
+
+Two additions to note. **The three `dagster-*` integration packages pinned in
+§14** — `dagster-dlt`, `dagster-dbt`, `dagster-duckdb` — are now actually used;
+1.1 pinned them and then hand-rolled what they provide. And **`fastexcel`** (§14)
+is now a direct dependency rather than an anticipated one, because the Excel gap
+§4 documents is filled by a Polars transformer inside dlt rather than by a
+separate adapter.
+
+---
+
 ## 1. How these were judged
 
 Five criteria come from the project brief ([../README.md](../README.md) §3: *"the initial implementation should favor lightweight components that are easy to deploy locally"*):
