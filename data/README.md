@@ -138,12 +138,13 @@ def run_sql_to_delta(sql: str, target: str, *, mode: str = "overwrite") -> pa.Ta
 
 ## Status
 
-**Version 3.0 of the design; implementation at zero.**
+**Version 3.0 of the design; a first implementation pass is built.**
 
 - **1.1** specified a four-layer Clean Architecture with 14 ports and a composition root.
 - **2.0** deleted that and used the chosen frameworks directly — dlt as the source abstraction, Dagster resources as the dependency injection. Sixty Python files became fifteen.
 - **3.0** makes Delta Lake the table format and **removes dbt**. Its jobs move to things already in the stack: `deps=[...]` for ordering, Pandera plus Delta schema enforcement for contracts, the Dagster graph for lineage, `write_deltalake` for materialization. Three dependencies and three config files go. Delta earns its place on `MERGE` and atomic commits — not on multi-writer ACID, which nothing here exercises.
+- **This pass** implements stages 0–4 and 6 of [implementation-plan.md](implementation-plan.md) (skeleton, storage, all four tabular sources end to end to Gold, the PDF document pipeline, retrieval + API + publish, and the eval harness) against a self-contained seed layer (`scripts/seed_files.py`, `scripts/seed_erp_db.py`, `scripts/mock_channel_api.py`) — no external API keys required. **Media (video/image, ffmpeg + Gemini) is intentionally not built**: no `defs/media.py`, no `lib/gemini.py`, no `POST /api/v1/assets`. See `lib/delta.py`'s module docstring and the plan's "deliberately not built" table for the full list and triggers.
 
 Full mapping in [data-architecture.md](data-architecture.md)'s changelog; the two tool reversals (dbt, and Parquet→Delta) are recorded in [tech-stack-evaluation.md](tech-stack-evaluation.md).
 
-Start at [implementation-plan.md](implementation-plan.md) §7, stage 0 — and run **stage 0.5** first. Its four checks (does dlt write Delta, does `delta_scan` read it, does `MERGE` work, does `dagster-dlt` import) each have a named fallback, so a red result costs a design change rather than a day.
+To run (all commands from `data/`): `docker compose up -d`, `python scripts/seed_files.py && python -m scripts.seed_erp_db`, `uvicorn scripts.mock_channel_api:app --port 8099 &`, `python scripts/verify_integrations.py`, then `dagster dev` to materialize the asset graph, `python scripts/generate_fixture_pdf.py && python -m scripts.build_eval_dataset` once the document pipeline has run once, and `uvicorn api:app --port 8002` for the RAG demo.
