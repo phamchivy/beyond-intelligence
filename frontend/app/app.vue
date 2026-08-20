@@ -1,9 +1,9 @@
 <script setup>
-const title = 'Nuxt Boilerplate'
-const description = 'Enterprise AI Video Intelligence & Auto-Mitigation Workspace'
+const title = 'Beyond Intelligence'
+const description = 'AI Short Video Ads Generator workspace for product storytelling, rendering, and campaign analytics'
 
 useHead({
-  titleTemplate: '%s — SentraLoop AI',
+  titleTemplate: '%s',
   meta: [
     { name: 'description', content: description },
     { name: 'viewport', content: 'width=device-width, initial-scale=1' }
