@@ -1,0 +1,157 @@
+"""Unit tests for the trending-videos endpoint -- db, embed and rerank are stubbed.
+
+No database, no model download: the hybrid retrieval result and the
+cross-encoder scores are both handed in directly.
+"""
+
+from __future__ import annotations
+
+import time
+
+import pytest
+from fastapi.testclient import TestClient
+
+import api
+
+_DAY = 86_400.0
+
+
+def _chunk(video_id: str, *, revenue: float, age_days: float = 0.0, content: str = "text") -> dict:
+    """One hybrid-retrieval row, shaped as lib.db.search returns it."""
+    return {
+        "chunk_id": f"VID-{video_id}",
+        "document_id": video_id,
+        "content": content,
+        "score": 0.016,
+        "metadata": {
+            "video_id": video_id,
+            "title": f"title {video_id}",
+            "url": f"https://www.tiktok.com/@x/video/{video_id}",
+            "category_name": "Body Beauty Devices",
+            "product_name": "Nebulizer",
+            "revenue": revenue,
+            "views": 1000,
+            "ai_video": 0,
+            "fetched_at": time.time() - age_days * _DAY,
+            "storyboard": {
+                "hook": f"hook {video_id}", "cta": "buy", "summary": "s",
+                "scenes": [{"scene_no": 0, "t_start": 0.0, "t_end": 1.0, "shot_type": "close-up",
+                            "visual": "v", "on_screen_text": "", "voiceover": ""}],
+            },
+        },
+    }
+
+
+@pytest.fixture(autouse=True)
+def _patch_startup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip the real apply_init_sql() call on app startup."""
+    monkeypatch.setattr(api.db, "apply_init_sql", lambda: None)
+    monkeypatch.setattr(api, "embed", lambda texts: [[0.1, 0.2, 0.3]])
+
+
+@pytest.fixture
+def wire(monkeypatch: pytest.MonkeyPatch):
+    """Return a factory pinning db.search results and the rerank scores they get."""
+    def install(chunks: list[dict], scores: list[float]) -> TestClient:
+        monkeypatch.setattr(api.db, "search", lambda q, qvec, **kw: chunks)
+        monkeypatch.setattr(api, "rerank", lambda q, docs: scores)
+        return TestClient(api.app)
+
+    return install
+
+
+def test_returns_the_full_storyboard_not_just_the_matched_text(wire):
+    client = wire([_chunk("v1", revenue=100.0)], [5.0])
+    item = client.get("/api/v1/videos/trending", params={"q": "nebulizer"}).json()["items"][0]
+
+    assert item["video_id"] == "v1"
+    assert item["storyboard"]["hook"] == "hook v1"
+    assert len(item["storyboard"]["scenes"]) == 1
+    assert item["category_name"] == "Body Beauty Devices"
+
+
+def test_low_rerank_score_is_outranked_not_dropped_despite_higher_revenue(wire):
+    """Rerank reorders (relevance beats revenue), but nothing is removed."""
+    client = wire(
+        [_chunk("rich_offtopic", revenue=999_999.0), _chunk("relevant", revenue=1.0)],
+        [-4.0, 3.0],
+    )
+    items = client.get("/api/v1/videos/trending", params={"q": "nebulizer"}).json()["items"]
+
+    assert [i["video_id"] for i in items] == ["relevant", "rich_offtopic"]
+
+
+def test_among_relevant_results_higher_revenue_wins(wire, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(api.settings.retrieval, "rerank_min_score", 0.0)
+    client = wire(
+        [_chunk("small", revenue=10.0), _chunk("big", revenue=5000.0)],
+        [1.0, 1.0],
+    )
+    items = client.get("/api/v1/videos/trending", params={"q": "nebulizer"}).json()["items"]
+
+    assert [i["video_id"] for i in items] == ["big", "small"]
+
+
+def test_an_older_video_loses_to_a_newer_one_at_equal_revenue(
+    wire, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(api.settings.retrieval, "rerank_min_score", 0.0)
+    monkeypatch.setattr(api.settings.retrieval, "trending_half_life_days", 14.0)
+    client = wire(
+        [_chunk("old", revenue=100.0, age_days=60.0), _chunk("new", revenue=100.0, age_days=0.0)],
+        [1.0, 1.0],
+    )
+    items = client.get("/api/v1/videos/trending", params={"q": "nebulizer"}).json()["items"]
+
+    assert [i["video_id"] for i in items] == ["new", "old"]
+    assert items[0]["trending_score"] > items[1]["trending_score"]
+
+
+def test_an_irrelevant_hit_still_returns_with_its_low_rerank_score_visible(wire):
+    """No relevance gate yet -- an off-topic query still gets its best hybrid match,
+    but the low rerank_score in the response is what a caller filters on itself."""
+    client = wire([_chunk("v1", revenue=100.0)], [-9.0])
+    resp = client.get("/api/v1/videos/trending", params={"q": "laptop cooling pad"})
+
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    assert [i["video_id"] for i in items] == ["v1"]
+    assert items[0]["rerank_score"] == -9.0
+
+
+def test_top_k_defaults_to_five_and_is_clamped_to_max(wire, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(api.settings.retrieval, "rerank_min_score", 0.0)
+    chunks = [_chunk(f"v{i}", revenue=float(i)) for i in range(10)]
+    client = wire(chunks, [1.0] * 10)
+
+    assert len(client.get("/api/v1/videos/trending", params={"q": "x"}).json()["items"]) == 5
+
+    huge = client.get("/api/v1/videos/trending", params={"q": "x", "top_k": 10_000})
+    assert len(huge.json()["items"]) == 10  # capped by candidates, never errors
+
+
+def test_search_is_scoped_to_the_video_source_type(monkeypatch: pytest.MonkeyPatch):
+    """Video queries must not compete with the document chunks in the same index."""
+    monkeypatch.setattr(api.db, "apply_init_sql", lambda: None)
+    monkeypatch.setattr(api, "embed", lambda texts: [[0.1]])
+    monkeypatch.setattr(api, "rerank", lambda q, docs: [])
+    seen = {}
+
+    def _fake_search(q, qvec, **kw):
+        seen.update(kw)
+        return []
+
+    monkeypatch.setattr(api.db, "search", _fake_search)
+    TestClient(api.app).get("/api/v1/videos/trending", params={"q": "x"})
+
+    assert seen["source_type"] == "video_storyboard"
+    assert seen["top_k"] == api.settings.retrieval.candidate_k
+
+
+def test_get_and_post_return_identical_bodies(wire, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(api.settings.retrieval, "rerank_min_score", 0.0)
+    client = wire([_chunk("v1", revenue=100.0)], [2.0])
+
+    get_resp = client.get("/api/v1/videos/trending", params={"q": "nebulizer", "top_k": 3})
+    post_resp = client.post("/api/v1/videos/trending", json={"q": "nebulizer", "top_k": 3})
+    assert get_resp.json() == post_resp.json()

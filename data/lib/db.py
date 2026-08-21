@@ -220,10 +220,12 @@ def upsert_chunks(
 
 _HYBRID_SQL = """
 with dense as (
-    select chunk_id, row_number() over (order by embedding <=> %(qvec)s::vector) as rank
-    from "index".embedding
-    where embedder_model_id = %(model)s
-    order by embedding <=> %(qvec)s::vector limit %(leg_k)s
+    select e.chunk_id, row_number() over (order by e.embedding <=> %(qvec)s::vector) as rank
+    from "index".embedding e
+    join "index".chunk c using (chunk_id)
+    where e.embedder_model_id = %(model)s
+      and (%(source_type)s::text is null or c.source_type = %(source_type)s)
+    order by e.embedding <=> %(qvec)s::vector limit %(leg_k)s
 ),
 lexical as (
     select chunk_id, row_number() over (order by score desc) as rank
@@ -234,6 +236,7 @@ lexical as (
                    ts_rank(content_tsv, plainto_tsquery('simple', public.immutable_unaccent(%(q)s)))
                ) as score
         from "index".chunk
+        where (%(source_type)s::text is null or source_type = %(source_type)s)
     ) s where score > %(threshold)s
     order by score desc limit %(leg_k)s
 )
@@ -248,6 +251,7 @@ group by 1,2,3,4 order by score desc limit %(top_k)s
 def search(
     q: str, qvec: list[float], *, top_k: int, leg_k: int | None = None,
     rrf_k: int | None = None, threshold: float | None = None, model: str | None = None,
+    source_type: str | None = None,
 ) -> list[dict[str, Any]]:
     """Run the hybrid dense + lexical retrieval query, fused with Reciprocal Rank Fusion.
 
@@ -268,6 +272,10 @@ def search(
             to ``settings.retrieval.trigram_threshold``.
         model: The embedder model id to filter the dense leg on. Defaults
             to ``settings.retrieval.embedder_model_id``.
+        source_type: Restrict both legs to one ``index.chunk.source_type``,
+            e.g. ``"video_storyboard"``. ``None`` searches everything --
+            the index holds more than one kind of content, and a caller
+            after videos must not compete with document chunks.
 
     Returns:
         Rows with ``chunk_id``, ``document_id``, ``content``, ``metadata``,
@@ -287,6 +295,7 @@ def search(
                     threshold if threshold is not None else settings.retrieval.trigram_threshold
                 ),
                 "model": model or settings.retrieval.embedder_model_id,
+                "source_type": source_type,
             },
         ).fetchall()
     return list(rows)

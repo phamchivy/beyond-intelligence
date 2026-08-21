@@ -8,6 +8,7 @@ this pass does not produce.
 
 from __future__ import annotations
 
+import time
 import uuid
 from typing import Any
 
@@ -18,6 +19,7 @@ from pydantic import BaseModel, Field
 from lib import db
 from lib.embedding import embed
 from lib.logging import get_logger, log_event
+from lib.rerank import rerank
 from lib.settings import settings
 
 logger = get_logger(__name__)
@@ -29,6 +31,13 @@ class DataQueryRequest(BaseModel):
 
     q: str
     top_k: int = Field(default=settings.retrieval.top_k, ge=1)
+
+
+class TrendingVideosRequest(BaseModel):
+    """Body for `POST /api/v1/videos/trending`."""
+
+    q: str
+    top_k: int = Field(default=5, ge=1)
 
 
 class ApiError(Exception):
@@ -124,3 +133,92 @@ def query_get(q: str, top_k: int = settings.retrieval.top_k) -> dict[str, Any]:
 def query_post(body: DataQueryRequest) -> dict[str, Any]:
     """POST variant of the query endpoint -- what integration-architecture.md specifies."""
     return _run_query(body.q, body.top_k)
+
+
+# ============================================================ trending video storyboards
+
+
+def _trending_score(metadata: dict[str, Any], *, now: float) -> float:
+    """Score one candidate video by revenue, decayed by how long ago it was fetched.
+
+    Decay rather than a date cutoff: a hard "last N days" filter returns
+    nothing at all on a thin bucket, and reads as a broken endpoint.
+
+    Args:
+        metadata: The chunk's metadata, carrying ``revenue`` and ``fetched_at``.
+        now: Current Unix time, passed in so every candidate in one
+            request is scored against the same instant.
+
+    Returns:
+        ``revenue`` halved once per ``trending_half_life_days`` of age.
+    """
+    revenue = float(metadata.get("revenue") or 0.0)
+    fetched_at = metadata.get("fetched_at")
+    if not fetched_at:
+        return revenue
+    age_days = max(0.0, (now - float(fetched_at)) / 86_400.0)
+    return revenue * 0.5 ** (age_days / settings.retrieval.trending_half_life_days)
+
+
+def _run_trending(q: str, top_k: int) -> dict[str, Any]:
+    """Retrieve, then reorder by relevance (rerank score, trending as tiebreak).
+
+    Nothing is dropped for scoring low -- ``settings.retrieval.rerank_min_score``
+    is defined but not applied here yet (reorder only, no relevance gate).
+    A cross-encoder score has no calibrated meaning across models, and a
+    mistuned cutoff would silently hide legitimately relevant results the
+    same way an absent one lets an irrelevant one rank #1 on revenue alone.
+
+    Args:
+        q: A product name or category name.
+        top_k: How many videos to return, clamped to ``max_top_k``.
+
+    Returns:
+        `{"items": [...]}`, each item a video with its full storyboard.
+    """
+    top_k = min(top_k, settings.retrieval.max_top_k)
+    qvec = embed([q])[0]
+    candidates = db.search(
+        q, qvec, top_k=settings.retrieval.candidate_k, source_type="video_storyboard"
+    )
+
+    scores = rerank(q, [c["content"] for c in candidates])
+    now = time.time()
+    ranked = sorted(
+        zip(candidates, scores, strict=True),
+        key=lambda pair: (pair[1], _trending_score(pair[0]["metadata"], now=now)),
+        reverse=True,
+    )
+
+    items = []
+    for chunk, score in ranked[:top_k]:
+        meta = chunk["metadata"]
+        items.append({
+            "video_id": meta.get("video_id"),
+            "title": meta.get("title"),
+            "url": meta.get("url"),
+            "category_name": meta.get("category_name"),
+            "product_name": meta.get("product_name"),
+            "revenue": meta.get("revenue"),
+            "views": meta.get("views"),
+            "ai_video": meta.get("ai_video"),
+            "rerank_score": round(float(score), 4),
+            "trending_score": round(_trending_score(meta, now=now), 2),
+            "storyboard": meta.get("storyboard", {}),
+        })
+
+    log_event(logger, "info", "trending_videos_query", q=q, top_k=top_k,
+              candidate_count=len(candidates), result_count=len(items))
+    return {"items": items}
+
+
+@app.get("/api/v1/videos/trending")
+def trending_get(q: str, top_k: int = 5) -> dict[str, Any]:
+    """GET variant: product or category name in, trending storyboards out."""
+    return _run_trending(q, top_k)
+
+
+@app.post("/api/v1/videos/trending")
+def trending_post(body: TrendingVideosRequest) -> dict[str, Any]:
+    """POST variant of the trending-videos endpoint."""
+    return _run_trending(body.q, body.top_k)

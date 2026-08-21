@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -58,7 +60,21 @@ def test_to_row_builds_the_tiktok_permalink():
     assert row["category_name"] == "Beauty & Personal Care"
 
 
-def test_top_videos_resolves_keyword_to_category_then_ranks(stub_client):
+def _install_transport(monkeypatch: pytest.MonkeyPatch, handler) -> None:
+    """Point k.httpx.Client at a body-aware MockTransport for one test."""
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        k.httpx, "Client", lambda **kwargs: real_client(**{**kwargs, "transport": transport})
+    )
+
+
+def _body(request: httpx.Request) -> dict:
+    return json.loads(request.content)
+
+
+def test_top_videos_prefers_the_product_id_tier_when_it_has_videos(stub_client):
+    """product_id videos -- ones that actually mount the matched product -- win outright."""
     stub_client({
         "product/rank": {"success": True, "data": [
             {"product_id": "p1", "product_name": "Electric Shaver"},
@@ -75,8 +91,65 @@ def test_top_videos_resolves_keyword_to_category_then_ranks(stub_client):
     assert rows[0]["category_name"] == "Beauty"
 
 
-def test_top_videos_falls_back_to_a_broader_category_when_the_leaf_is_empty(stub_client):
-    """A leaf category with no ranked videos must not end the search."""
+def test_falls_back_to_category_plus_keyword_when_no_video_mounts_the_product(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """No video for the exact product must not give up -- try category + keyword text next."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path.rsplit("/openapi/v1/tiktok/", 1)[-1]
+        if path == "product/rank":
+            return httpx.Response(200, json={
+                "success": True, "data": [{"product_id": "p1", "product_name": "Widget"}],
+            })
+        if path == "product/detail":
+            return httpx.Response(200, json={"success": True, "data": {"ter_cate_id": "cat1"}})
+        if path == "category/detail":
+            return httpx.Response(200, json={"success": True, "data": {"category_name": "Cat"}})
+        body = _body(request)
+        if "product_id" in body:
+            return httpx.Response(200, json={"success": True, "data": []})
+        assert body.get("keyword") == "widget"
+        return httpx.Response(200, json={
+            "success": True,
+            "data": [{"video_id": "v2", "belonged_creator_handle": "carl", "revenue": 7.0}],
+        })
+
+    _install_transport(monkeypatch, handler)
+    rows = k.top_videos("widget")
+    assert [r["url"] for r in rows] == ["https://www.tiktok.com/@carl/video/v2"]
+
+
+def test_falls_back_to_category_alone_when_keyword_also_finds_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Last resort: top-revenue videos anywhere in the category, no product or text match."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path.rsplit("/openapi/v1/tiktok/", 1)[-1]
+        if path == "product/rank":
+            return httpx.Response(200, json={
+                "success": True, "data": [{"product_id": "p1", "product_name": "Widget"}],
+            })
+        if path == "product/detail":
+            return httpx.Response(200, json={"success": True, "data": {"ter_cate_id": "cat1"}})
+        if path == "category/detail":
+            return httpx.Response(200, json={"success": True, "data": {"category_name": "Cat"}})
+        body = _body(request)
+        if "product_id" in body or "keyword" in body:
+            return httpx.Response(200, json={"success": True, "data": []})
+        return httpx.Response(200, json={
+            "success": True,
+            "data": [{"video_id": "v3", "belonged_creator_handle": "dee", "revenue": 3.0}],
+        })
+
+    _install_transport(monkeypatch, handler)
+    rows = k.top_videos("widget")
+    assert [r["url"] for r in rows] == ["https://www.tiktok.com/@dee/video/v3"]
+
+
+def test_falls_back_to_a_broader_category_within_the_keyword_tier_when_the_leaf_is_empty(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A leaf category with no keyword-matched videos must not end the search early."""
     seen: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -92,20 +165,18 @@ def test_top_videos_falls_back_to_a_broader_category_when_the_leaf_is_empty(stub
             })
         if path == "category/detail":
             return httpx.Response(200, json={"success": True, "data": {"category_name": "Mid"}})
-        category = request.read().decode()
-        seen.append("leaf" if '"leaf"' in category else "mid")
-        data = [] if "leaf" in seen[-1] else [
+        body = _body(request)
+        if "product_id" in body:
+            return httpx.Response(200, json={"success": True, "data": []})
+        which = "leaf" if body.get("category_ids") == ["leaf"] else "mid"
+        seen.append(which)
+        data = [] if which == "leaf" else [
             {"video_id": "v9", "belonged_creator_handle": "bob", "revenue": 5.0}
         ]
         return httpx.Response(200, json={"success": True, "data": data})
 
-    transport = httpx.MockTransport(handler)
-    real_client = httpx.Client
-    k.httpx.Client = lambda **kwargs: real_client(**{**kwargs, "transport": transport})
-    try:
-        rows = k.top_videos("electric shaver")
-    finally:
-        k.httpx.Client = real_client
+    _install_transport(monkeypatch, handler)
+    rows = k.top_videos("electric shaver")
 
     assert seen == ["leaf", "mid"]
     assert rows[0]["url"] == "https://www.tiktok.com/@bob/video/v9"

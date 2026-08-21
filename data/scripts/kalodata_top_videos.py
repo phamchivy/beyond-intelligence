@@ -8,9 +8,10 @@ Run from `data/`::
     python -m scripts.kalodata_top_videos "electric shaver" --limit 10 --json
 
 Endpoint paths, request fields and response fields all come from
-kalodata/kalodata-api.txt. Up to four calls per run (product/rank,
-product/detail, video/rank, category/detail), well inside the ranking
-endpoints' 10 requests / 10 seconds.
+kalodata/kalodata-api.txt. A handful of calls per run -- product/rank,
+product/detail, up to a few video/rank tries across three narrowing tiers,
+category/detail -- well inside the ranking endpoints' 10 requests / 10
+seconds.
 """
 
 from __future__ import annotations
@@ -68,8 +69,10 @@ def _post(client: httpx.Client, path: str, payload: dict) -> list | dict:
     return result["data"]
 
 
-def _resolve_product(client: httpx.Client, keyword: str, date_range: str) -> tuple[str, list[str]]:
-    """Resolve a product keyword to its name and the category IDs it sells in.
+def _resolve_product(
+    client: httpx.Client, keyword: str, date_range: str
+) -> tuple[str, str, list[str]]:
+    """Resolve a product keyword to its id, name and the category IDs it sells in.
 
     Args:
         client: An open client carrying the ``secret-key`` header.
@@ -77,8 +80,8 @@ def _resolve_product(client: httpx.Client, keyword: str, date_range: str) -> tup
         date_range: A Kalodata date range, e.g. ``"last30Day"``.
 
     Returns:
-        The top-matching product's name, and its category IDs (most
-        specific first).
+        The top-matching product's id, its name, and its category IDs
+        (most specific first).
 
     Raises:
         RuntimeError: If no product matches the keyword.
@@ -99,7 +102,7 @@ def _resolve_product(client: httpx.Client, keyword: str, date_range: str) -> tup
         "product_id": top["product_id"],
     })
     category_ids = [cid for key in _CATEGORY_KEYS if (cid := detail.get(key))]
-    return top["product_name"], category_ids
+    return top["product_id"], top["product_name"], category_ids
 
 
 def _category_name(client: httpx.Client, category_id: str, date_range: str) -> str:
@@ -157,7 +160,21 @@ def to_row(video: dict, *, product_name: str, category_name: str) -> dict:
 
 
 def top_videos(keyword: str, *, date_range: str = "last30Day", limit: int = 10) -> list[dict]:
-    """Return the highest-revenue videos in the category a keyword sells in.
+    """Return the highest-revenue videos that actually feature a keyword's product.
+
+    Tries three tiers, each broader than the last -- ``video/rank`` has no
+    "search within this category" mode of its own, so the narrowing has to
+    be layered as separate calls:
+
+    1. ``product_id`` -- videos that mount the exact top-matching product.
+       The precise answer: these videos are demonstrably about it.
+    2. ``category_ids`` + ``keyword`` -- the resolved category, filtered by
+       the same keyword against video titles. Broader than (1) but still
+       text-relevant when no video mounts that specific product listing.
+    3. ``category_ids`` alone -- top-revenue videos anywhere in the
+       category. Only reached when neither of the above found anything;
+       these can be about a different product in the same category
+       (Kalodata has no finer filter to fall back to).
 
     Args:
         keyword: Free-text product search, e.g. ``"electric shaver"``.
@@ -166,8 +183,9 @@ def top_videos(keyword: str, *, date_range: str = "last30Day", limit: int = 10) 
         limit: How many videos to return. The API's page cap is 100.
 
     Returns:
-        Up to ``limit`` rows from :func:`to_row`, highest revenue first.
-        Empty only if none of the product's categories has ranked videos.
+        Up to ``limit`` rows from :func:`to_row`, highest revenue first,
+        from the narrowest tier that found anything. Empty only if none of
+        the three tiers has ranked videos.
 
     Raises:
         RuntimeError: If the API key is unset or the API reports failure.
@@ -175,24 +193,40 @@ def top_videos(keyword: str, *, date_range: str = "last30Day", limit: int = 10) 
     if not settings.kalodata.api_key.get_secret_value():
         raise RuntimeError("KALODATA_API_KEY is unset -- add it to data/.env")
 
+    def _rank(client: httpx.Client, **filters: object) -> list[dict]:
+        return _post(client, "video/rank", {
+            "date_range": date_range,
+            "sort_field": {"field": "revenue", "type": "DESC"},
+            "page_size": max(limit, _MIN_PAGE_SIZE),
+            "page_number": 1,
+            **filters,
+        })
+
     headers = {"secret-key": settings.kalodata.api_key.get_secret_value()}
     with httpx.Client(timeout=_TIMEOUT, headers=headers) as client:
-        product_name, category_ids = _resolve_product(client, keyword, date_range)
-        for category_id in category_ids:
-            videos = _post(client, "video/rank", {
-                "date_range": date_range,
-                "sort_field": {"field": "revenue", "type": "DESC"},
-                "page_size": max(limit, _MIN_PAGE_SIZE),
-                "page_number": 1,
-                "category_ids": [category_id],
-            })
-            if videos:
-                category_name = _category_name(client, category_id, date_range)
-                return [
-                    to_row(v, product_name=product_name, category_name=category_name)
-                    for v in videos[:limit]
-                ]
-    return []
+        product_id, product_name, category_ids = _resolve_product(client, keyword, date_range)
+        primary_category_id = category_ids[0] if category_ids else None
+
+        videos = _rank(client, product_id=product_id)
+        if not videos and primary_category_id:
+            for category_id in category_ids:
+                videos = _rank(client, category_ids=[category_id], keyword=keyword)
+                if videos:
+                    break
+        if not videos:
+            for category_id in category_ids:
+                videos = _rank(client, category_ids=[category_id])
+                if videos:
+                    break
+
+        if not videos:
+            return []
+        category_name = _category_name(client, primary_category_id, date_range) \
+            if primary_category_id else ""
+        return [
+            to_row(v, product_name=product_name, category_name=category_name)
+            for v in videos[:limit]
+        ]
 
 
 def main() -> int:

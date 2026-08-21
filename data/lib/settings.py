@@ -184,6 +184,18 @@ class RetrievalSettings(BaseSettings):
     trigram_threshold: float = 0.2
     embedder_model_id: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
+    # Reranking. RRF fuses ranks, so it knows a chunk placed well in both
+    # legs but nothing about whether the text answers the query -- and an
+    # RRF score has no absolute scale to threshold against. A cross-encoder
+    # score does, which is what makes ``rerank_min_score`` meaningful.
+    reranker_model_id: str = "Xenova/ms-marco-MiniLM-L-6-v2"
+    rerank_min_score: float = 0.0
+    candidate_k: int = 50
+
+    # Trending decay, not a cutoff: a hard "last N days" filter returns
+    # nothing on a thin bucket.
+    trending_half_life_days: float = 14.0
+
 
 class QualitySettings(BaseSettings):
     """The threshold that decides whether a quality gate blocks downstream work."""
