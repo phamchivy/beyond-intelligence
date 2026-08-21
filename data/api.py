@@ -8,8 +8,10 @@ this pass does not produce.
 
 from __future__ import annotations
 
+import math
 import time
 import uuid
+from datetime import date, datetime, timezone
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -21,6 +23,7 @@ from lib.embedding import embed
 from lib.logging import get_logger, log_event
 from lib.rerank import rerank
 from lib.settings import settings
+from lib.storyboard import render_block
 
 logger = get_logger(__name__)
 app = FastAPI(title="Beyond Intelligence — Data API")
@@ -149,26 +152,83 @@ def query_post(body: DataQueryRequest) -> dict[str, Any]:
 # ============================================================ trending video storyboards
 
 
-def _trending_score(metadata: dict[str, Any], *, now: float) -> float:
-    """Score one candidate video by revenue, decayed by how long ago it was fetched.
+def _age_days(metadata: dict[str, Any], *, now: float) -> float:
+    """How many days old a video is, preferring its real publish date.
+
+    ``creator_debut`` (Kalodata's video publish date) is the correct age
+    signal; ``fetched_at`` (when *we* downloaded it) is only a fallback for
+    rows indexed before ``creator_debut`` was captured -- otherwise a video
+    published a year ago but fetched yesterday would read as brand-new.
+
+    Args:
+        metadata: The chunk's metadata, carrying ``creator_debut`` and/or
+            ``fetched_at``.
+        now: Current Unix time, passed in so every candidate in one
+            request is scored against the same instant.
+
+    Returns:
+        Age in days, never negative.
+    """
+    debut = metadata.get("creator_debut")
+    if debut:
+        try:
+            published_at = datetime.combine(
+                date.fromisoformat(debut), datetime.min.time(), tzinfo=timezone.utc
+            ).timestamp()
+            return max(0.0, (now - published_at) / 86_400.0)
+        except ValueError:
+            pass
+    fetched_at = metadata.get("fetched_at")
+    if not fetched_at:
+        return 0.0
+    return max(0.0, (now - float(fetched_at)) / 86_400.0)
+
+
+def _trending_score(metadata: dict[str, Any], *, now: float) -> tuple[float, float]:
+    """Score one candidate video by revenue, decayed by its real age.
 
     Decay rather than a date cutoff: a hard "last N days" filter returns
     nothing at all on a thin bucket, and reads as a broken endpoint.
 
     Args:
-        metadata: The chunk's metadata, carrying ``revenue`` and ``fetched_at``.
+        metadata: The chunk's metadata, carrying ``revenue`` and the
+            fields :func:`_age_days` reads.
         now: Current Unix time, passed in so every candidate in one
             request is scored against the same instant.
 
     Returns:
-        ``revenue`` halved once per ``trending_half_life_days`` of age.
+        A tuple of (``revenue`` halved once per ``trending_half_life_days``
+        of age, that age in days) -- callers needing just the score still
+        get the age for free instead of recomputing it.
     """
     revenue = float(metadata.get("revenue") or 0.0)
-    fetched_at = metadata.get("fetched_at")
-    if not fetched_at:
-        return revenue
-    age_days = max(0.0, (now - float(fetched_at)) / 86_400.0)
-    return revenue * 0.5 ** (age_days / settings.retrieval.trending_half_life_days)
+    age_days = _age_days(metadata, now=now)
+    score = revenue * 0.5 ** (age_days / settings.retrieval.trending_half_life_days)
+    return score, age_days
+
+
+def _engagement_rate(metadata: dict[str, Any]) -> float | None:
+    """Engagement (likes+shares+comments) as a fraction of views.
+
+    A revenue-independent read on whether the storyboard itself resonated,
+    as opposed to converting through ad spend or an established storefront.
+    ``None`` when views are unknown -- a rate divided by zero is not "0%",
+    it's "can't tell".
+
+    Args:
+        metadata: The chunk's metadata, carrying ``digg_count``,
+            ``share_count``, ``comment_count`` and ``views``.
+
+    Returns:
+        The rate rounded to 4dp, or ``None`` if ``views`` is falsy.
+    """
+    views = metadata.get("views")
+    if not views:
+        return None
+    engagement = (metadata.get("digg_count") or 0) + (metadata.get("share_count") or 0) + (
+        metadata.get("comment_count") or 0
+    )
+    return round(engagement / views, 4)
 
 
 def _run_trending(q: str, top_k: int) -> dict[str, Any]:
@@ -179,13 +239,18 @@ def _run_trending(q: str, top_k: int) -> dict[str, Any]:
     A cross-encoder score has no calibrated meaning across models, and a
     mistuned cutoff would silently hide legitimately relevant results the
     same way an absent one lets an irrelevant one rank #1 on revenue alone.
+    The response's ``meta.relevance_gated: false`` says so explicitly, since
+    a caller reasoning over ``relevance`` has no other way to know that.
 
     Args:
         q: A product name or category name.
         top_k: How many videos to return, clamped to ``max_top_k``.
 
     Returns:
-        `{"items": [...]}`, each item a video with its full storyboard.
+        ``{"meta": {...}, "items": [...]}``, each item a video with its
+        full storyboard and a ``text`` rendition of the same content, for
+        callers (an LLM prompt, `agent/`'s ``HttpJsonRetriever``) that want
+        one string rather than nested fields.
     """
     top_k = min(top_k, settings.retrieval.max_top_k)
     qvec = embed([q])[0]
@@ -197,30 +262,48 @@ def _run_trending(q: str, top_k: int) -> dict[str, Any]:
     now = time.time()
     ranked = sorted(
         zip(candidates, scores, strict=True),
-        key=lambda pair: (pair[1], _trending_score(pair[0]["metadata"], now=now)),
+        key=lambda pair: (pair[1], _trending_score(pair[0]["metadata"], now=now)[0]),
         reverse=True,
     )
 
     items = []
     for chunk, score in ranked[:top_k]:
         meta = chunk["metadata"]
+        trending_score, age_days = _trending_score(meta, now=now)
         items.append({
+            "id": meta.get("video_id"),
             "video_id": meta.get("video_id"),
             "title": meta.get("title"),
             "url": meta.get("url"),
             "category_name": meta.get("category_name"),
             "product_name": meta.get("product_name"),
-            "revenue": meta.get("revenue"),
-            "views": meta.get("views"),
+            "matched_keyword": meta.get("matched_keyword"),
+            "revenue_usd": meta.get("revenue"),
+            "views_30d": meta.get("views"),
             "ai_video": meta.get("ai_video"),
+            "is_ad": bool(meta.get("ad")),
+            "engagement_rate": _engagement_rate(meta),
+            "duration_s": meta.get("duration_s"),
+            "age_days": round(age_days, 1),
+            "relevance": round(1 / (1 + math.exp(-float(score))), 3),
             "rerank_score": round(float(score), 4),
-            "trending_score": round(_trending_score(meta, now=now), 2),
+            "trending_score": round(trending_score, 2),
+            "text": render_block(meta),
             "storyboard": meta.get("storyboard", {}),
         })
 
     log_event(logger, "info", "trending_videos_query", q=q, top_k=top_k,
               candidate_count=len(candidates), result_count=len(items))
-    return {"items": items}
+    return {
+        "meta": {
+            "query": q,
+            "currency": settings.kalodata.currency,
+            "metrics_window": "last30Day",
+            "candidates_considered": len(candidates),
+            "relevance_gated": False,
+        },
+        "items": items,
+    }
 
 
 @app.get("/api/v1/videos/trending")

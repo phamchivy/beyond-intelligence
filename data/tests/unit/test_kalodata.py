@@ -60,6 +60,31 @@ def test_to_row_builds_the_tiktok_permalink():
     assert row["category_name"] == "Beauty & Personal Care"
 
 
+def test_to_row_passes_through_ad_flag_engagement_counts_and_creator_debut():
+    row = k.to_row(
+        {
+            "video_id": "7404191282148511007",
+            "belonged_creator_handle": "jenna_seas",
+            "video_title": "the shaver",
+            "revenue": 14.99,
+            "views": 1519,
+            "ai_video": 0,
+            "ad": 1,
+            "digg_count": 15000,
+            "share_count": 2500,
+            "comment_count": 800,
+            "creator_debut": "2024-01-15",
+        },
+        product_name="Electric Shaver",
+        category_name="Beauty & Personal Care",
+    )
+    assert row["ad"] == 1
+    assert row["digg_count"] == 15000
+    assert row["share_count"] == 2500
+    assert row["comment_count"] == 800
+    assert row["creator_debut"] == "2024-01-15"
+
+
 def _install_transport(monkeypatch: pytest.MonkeyPatch, handler) -> None:
     """Point k.httpx.Client at a body-aware MockTransport for one test."""
     transport = httpx.MockTransport(handler)

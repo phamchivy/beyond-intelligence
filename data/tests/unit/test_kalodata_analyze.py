@@ -37,6 +37,7 @@ _BRONZE_ROWS = [
 
 _STORYBOARD = {
     "hook": "Grab attention fast",
+    "hook_style": "Fast cuts with bold on-screen text",
     "cta": "Buy now",
     "summary": "Shaver demo",
     "scenes": [
@@ -137,6 +138,25 @@ def test_a_failed_analysis_does_not_abort_the_rest(monkeypatch: pytest.MonkeyPat
     assert len(by_id["v2"].scenes) == 2
 
 
+def test_analyze_one_quarantines_a_storyboard_whose_timestamps_overrun_duration(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Gemini claiming a scene past the video's real length must not reach Silver."""
+    monkeypatch.setattr(a, "analyze_video", lambda path, **kw: _STORYBOARD)
+    writes: list[tuple[str, str, int]] = []
+    monkeypatch.setattr(
+        a, "write_delta",
+        lambda layer, name, table, **kw: writes.append((layer, name, table.num_rows)) or 1,
+    )
+    bronze_row = {**_BRONZE_ROWS[0], "duration_s": 5.0}  # _STORYBOARD's last scene ends at 6.0
+
+    result = a._analyze_one(_FakeS3(), bronze_row, "storyboard-v1")
+
+    assert result.analyzed is False
+    assert result.scenes == []
+    assert ("quarantine", "video_storyboard", 2) in writes
+
+
 def test_storyboard_flattens_to_one_row_per_scene_with_video_level_fields(
     monkeypatch: pytest.MonkeyPatch, stub_tables
 ):
@@ -195,7 +215,8 @@ def test_write_silver_quarantines_a_scene_that_fails_the_contract(monkeypatch: p
     good_scene = {
         "video_id": "v1", "prompt_version": "storyboard-v1", "scene_no": 0,
         "t_start": 0.0, "t_end": 1.0, "shot_type": "close-up", "visual": "a hand",
-        "on_screen_text": "", "voiceover": "hi", "hook": "h", "cta": "c", "summary": "s",
+        "on_screen_text": "", "voiceover": "hi", "hook": "h", "hook_style": "hs",
+        "cta": "c", "summary": "s",
     }
     bad_scene = {**good_scene, "scene_no": 1, "visual": ""}  # contract requires non-empty
     result = a.AnalyzeResult("v1", _BRONZE_ROWS[0], scenes=[good_scene, bad_scene],

@@ -24,6 +24,7 @@ from lib import db
 from lib.delta import read_delta, table_version
 from lib.embedding import MODEL_ID, embed
 from lib.logging import get_logger, log_event
+from lib.settings import settings
 
 logger = get_logger(__name__)
 
@@ -62,6 +63,7 @@ def _storyboard(scenes: list[dict]) -> dict:
     """Reassemble the nested storyboard from its flat Silver scene rows."""
     return {
         "hook": scenes[0]["hook"],
+        "hook_style": scenes[0].get("hook_style"),
         "cta": scenes[0]["cta"],
         "summary": scenes[0]["summary"],
         "scenes": [
@@ -93,7 +95,14 @@ def build_chunks() -> list[dict]:
     if table_version("bronze", "tiktok_video") is None:
         return []
 
-    scenes_df = pl.from_arrow(read_delta("silver", "video_storyboard")).sort("scene_no")
+    # Silver is append-only and holds every prompt_version ever written;
+    # without this filter, a video re-analyzed under a newer prompt would
+    # have both versions' scenes interleave into one chunk.
+    scenes_df = (
+        pl.from_arrow(read_delta("silver", "video_storyboard"))
+        .filter(pl.col("prompt_version") == settings.gemini.prompt_version)
+        .sort("scene_no")
+    )
     bronze_by_id = {
         row["video_id"]: row
         for row in pl.from_arrow(read_delta("bronze", "tiktok_video")).to_dicts()
@@ -122,9 +131,16 @@ def build_chunks() -> list[dict]:
                 "url": video.get("url"),
                 "category_name": video.get("category_name"),
                 "product_name": video.get("product_name"),
+                "matched_keyword": video.get("keyword"),
                 "revenue": video.get("revenue"),
                 "views": video.get("views"),
                 "ai_video": video.get("ai_video"),
+                "ad": video.get("ad"),
+                "digg_count": video.get("digg_count"),
+                "share_count": video.get("share_count"),
+                "comment_count": video.get("comment_count"),
+                "creator_debut": video.get("creator_debut"),
+                "duration_s": video.get("duration_s"),
                 "fetched_at": video.get("fetched_at"),
                 "storyboard": _storyboard(scenes),
             },

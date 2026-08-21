@@ -5,11 +5,15 @@ from __future__ import annotations
 import pandera.polars as pa
 from pandera.typing.polars import Series
 
-CONTRACT_VERSION = "video_storyboard-v1"
+CONTRACT_VERSION = "video_storyboard-v2"
 
 
 class VideoStoryboardSchema(pa.DataFrameModel):
-    """Silver-layer contract for `video_storyboard`, one row per scene."""
+    """Silver-layer contract for `video_storyboard`, one row per scene.
+
+    ``hook_style`` is nullable: rows written under ``storyboard-v1`` (before
+    this column existed) are still valid, just without it.
+    """
 
     video_id: Series[str]
     prompt_version: Series[str]
@@ -21,5 +25,6 @@ class VideoStoryboardSchema(pa.DataFrameModel):
     on_screen_text: Series[str]
     voiceover: Series[str]
     hook: Series[str]
+    hook_style: Series[str] = pa.Field(nullable=True)
     cta: Series[str]
     summary: Series[str]

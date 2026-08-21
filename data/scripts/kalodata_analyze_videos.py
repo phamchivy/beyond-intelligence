@@ -35,6 +35,7 @@ from lib.delta import read_delta, s3_filesystem, table_version, write_delta
 from lib.gemini import analyze_video
 from lib.logging import get_logger, log_event
 from lib.settings import settings
+from lib.storyboard import render_block
 
 logger = get_logger(__name__)
 
@@ -81,11 +82,14 @@ def _analyze_one(fs, bronze_row: dict, prompt_version: str) -> AnalyzeResult:
         not lose the rest of the run.
     """
     video_id = bronze_row["video_id"]
+    duration_s = bronze_row.get("duration_s")
     with tempfile.TemporaryDirectory() as tmp:
         local_path = Path(tmp) / f"{video_id}.mp4"
         try:
             fs.get(bronze_row["s3_key"], str(local_path))
-            storyboard = analyze_video(local_path, prompt_version=prompt_version)
+            storyboard = analyze_video(
+                local_path, prompt_version=prompt_version, duration_s=duration_s
+            )
         except (RuntimeError, OSError) as exc:
             log_event(logger, "warning", "video_analyze_failed", video_id=video_id, error=str(exc))
             return AnalyzeResult(video_id, bronze_row, scenes=[], storyboard=None, analyzed=False)
@@ -102,11 +106,28 @@ def _analyze_one(fs, bronze_row: dict, prompt_version: str) -> AnalyzeResult:
             "on_screen_text": scene["on_screen_text"],
             "voiceover": scene["voiceover"],
             "hook": storyboard["hook"],
+            "hook_style": storyboard["hook_style"],
             "cta": storyboard["cta"],
             "summary": storyboard["summary"],
         }
         for scene in storyboard["scenes"]
     ]
+
+    if duration_s is not None and any(s["t_end"] > duration_s for s in scenes):
+        # ponytail: quarantined, not marked analyzed -- this video re-analyzes
+        # (another Gemini call) on every future run until the model stops
+        # over-running the clock. Fine at hackathon scale; if it recurs,
+        # record the failed prompt_version on the Bronze row so it's skipped.
+        log_event(
+            logger, "warning", "storyboard_timestamps_out_of_range",
+            video_id=video_id, duration_s=duration_s,
+            max_t_end=max(s["t_end"] for s in scenes),
+        )
+        write_delta(
+            "quarantine", "video_storyboard", pl.DataFrame(scenes).to_arrow(), mode="append"
+        )
+        return AnalyzeResult(video_id, bronze_row, scenes=[], storyboard=None, analyzed=False)
+
     log_event(logger, "info", "video_analyzed", video_id=video_id, scene_count=len(scenes))
     return AnalyzeResult(video_id, bronze_row, scenes=scenes, storyboard=storyboard, analyzed=True)
 
@@ -159,7 +180,9 @@ def _write_silver(results: list[AnalyzeResult]) -> int | None:
         log_event(logger, "warning", "video_storyboard_quarantined", row_count=bad.num_rows)
     if not good.num_rows:
         return None
-    return write_delta("silver", "video_storyboard", good, mode="append")
+    # merge: storyboard-v2 adds hook_style, a deliberate additive change
+    # over storyboard-v1 rows already in Silver (decision 8.19).
+    return write_delta("silver", "video_storyboard", good, mode="append", schema_mode="merge")
 
 
 def render_markdown(results: list[AnalyzeResult]) -> str:
@@ -172,30 +195,12 @@ def render_markdown(results: list[AnalyzeResult]) -> str:
         Markdown, one section per analyzed video, separated by ``---``.
         Empty string if nothing was analyzed this run.
     """
-    blocks = []
-    for r in results:
-        if not r.analyzed:
-            continue
-        b, sb = r.bronze_row, r.storyboard
-        category = b.get("category_name") or "Unknown"
-        revenue = b.get("revenue") or 0
-        views = b.get("views") or 0
-        kind = "AI-generated" if b.get("ai_video") else "organic"
-
-        rows = "\n".join(
-            f"| {s['scene_no']} | {s['t_start']:.0f}s | {s['shot_type']} | {s['visual']} | "
-            f"{s['on_screen_text']} | {s['voiceover']} |"
-            for s in sb["scenes"]
-        )
-        blocks.append(
-            f"## Trending reference — {category}\n"
-            f"Revenue ${revenue:,.0f} · {views:,} views · {kind}\n\n"
-            f"HOOK: {sb['hook']}\n\n"
-            "| # | time | shot | visual | on-screen text | voiceover |\n"
-            "|---|------|------|--------|----------------|-----------|\n"
-            f"{rows}\n\n"
-            f"CTA: {sb['cta']}"
-        )
+    blocks = [
+        block
+        for r in results if r.analyzed
+        for block in [render_block({**r.bronze_row, "storyboard": r.storyboard})]
+        if block
+    ]
     return "\n\n---\n\n".join(blocks)
 
 

@@ -16,7 +16,11 @@ import api
 _DAY = 86_400.0
 
 
-def _chunk(video_id: str, *, revenue: float, age_days: float = 0.0, content: str = "text") -> dict:
+def _chunk(
+    video_id: str, *, revenue: float, age_days: float = 0.0, content: str = "text",
+    ad: int = 0, digg_count: int = 0, share_count: int = 0, comment_count: int = 0,
+    creator_debut: str | None = None,
+) -> dict:
     """One hybrid-retrieval row, shaped as lib.db.search returns it."""
     return {
         "chunk_id": f"VID-{video_id}",
@@ -29,9 +33,16 @@ def _chunk(video_id: str, *, revenue: float, age_days: float = 0.0, content: str
             "url": f"https://www.tiktok.com/@x/video/{video_id}",
             "category_name": "Body Beauty Devices",
             "product_name": "Nebulizer",
+            "matched_keyword": "nebulizer",
             "revenue": revenue,
             "views": 1000,
             "ai_video": 0,
+            "ad": ad,
+            "digg_count": digg_count,
+            "share_count": share_count,
+            "comment_count": comment_count,
+            "creator_debut": creator_debut,
+            "duration_s": 60.0,
             "fetched_at": time.time() - age_days * _DAY,
             "storyboard": {
                 "hook": f"hook {video_id}", "cta": "buy", "summary": "s",
@@ -155,3 +166,55 @@ def test_get_and_post_return_identical_bodies(wire, monkeypatch: pytest.MonkeyPa
     get_resp = client.get("/api/v1/videos/trending", params={"q": "nebulizer", "top_k": 3})
     post_resp = client.post("/api/v1/videos/trending", json={"q": "nebulizer", "top_k": 3})
     assert get_resp.json() == post_resp.json()
+
+
+def test_relevance_is_a_calibrated_probability_not_a_raw_logit(wire):
+    client = wire([_chunk("garbage", revenue=1.0), _chunk("great", revenue=1.0)], [-9.0, 4.21])
+    items = client.get("/api/v1/videos/trending", params={"q": "nebulizer"}).json()["items"]
+    by_id = {i["video_id"]: i for i in items}
+
+    assert by_id["garbage"]["rerank_score"] == -9.0
+    assert by_id["garbage"]["relevance"] < 0.01
+    assert by_id["great"]["rerank_score"] == 4.21
+    assert by_id["great"]["relevance"] > 0.95
+
+
+def test_meta_echoes_the_query_and_states_no_relevance_gate(wire):
+    client = wire([_chunk("v1", revenue=100.0)], [1.0])
+    body = client.get("/api/v1/videos/trending", params={"q": "nebulizer"}).json()
+
+    assert body["meta"]["query"] == "nebulizer"
+    assert body["meta"]["relevance_gated"] is False
+    assert body["meta"]["candidates_considered"] == 1
+
+
+def test_text_field_carries_the_hook_and_every_scene(wire):
+    client = wire([_chunk("v1", revenue=100.0)], [1.0])
+    item = client.get("/api/v1/videos/trending", params={"q": "nebulizer"}).json()["items"][0]
+
+    assert "hook v1" in item["text"]
+    assert "close-up" in item["text"]
+    assert item["id"] == "v1"
+
+
+def test_creator_debut_drives_age_not_fetched_at(wire, monkeypatch: pytest.MonkeyPatch):
+    """fetched_at (our download time) must never override a known real publish date."""
+    monkeypatch.setattr(api.settings.retrieval, "rerank_min_score", 0.0)
+    old_debut = time.strftime("%Y-%m-%d", time.gmtime(time.time() - 400 * _DAY))
+    client = wire(
+        [_chunk("just_fetched", revenue=100.0, creator_debut=old_debut, age_days=0.0)], [1.0],
+    )
+    item = client.get("/api/v1/videos/trending", params={"q": "nebulizer"}).json()["items"][0]
+
+    assert item["age_days"] > 300  # old by publish date, despite being fetched today
+
+
+def test_is_ad_and_engagement_rate_surface_from_metadata(wire):
+    client = wire(
+        [_chunk("v1", revenue=100.0, ad=1, digg_count=50, share_count=30, comment_count=20)],
+        [1.0],
+    )
+    item = client.get("/api/v1/videos/trending", params={"q": "nebulizer"}).json()["items"][0]
+
+    assert item["is_ad"] is True
+    assert item["engagement_rate"] == 0.1  # (50+30+20)/1000

@@ -154,6 +154,11 @@ def to_row(video: dict, *, product_name: str, category_name: str) -> dict:
         "views": video.get("views"),
         "ads_roas": video.get("ads_roas"),
         "ai_video": video.get("ai_video"),
+        "ad": video.get("ad"),
+        "digg_count": video.get("digg_count"),
+        "share_count": video.get("share_count"),
+        "comment_count": video.get("comment_count"),
+        "creator_debut": video.get("creator_debut"),
         "product_name": product_name,
         "category_name": category_name,
     }
