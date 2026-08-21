@@ -69,6 +69,11 @@ class StorageSettings(BaseSettings):
         return f"{self.url}/quarantine"
 
     @property
+    def index_url(self) -> str:
+        """URI for the retrieval index snapshot -- a Postgres backup, not a pipeline layer."""
+        return f"{self.url}/index"
+
+    @property
     def storage_options(self) -> dict[str, str]:
         """The credential dict every delta-rs and DuckDB S3 call needs.
 

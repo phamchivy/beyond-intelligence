@@ -141,6 +141,7 @@ def main() -> int:
 
     vectors = embed([c["content"] for c in chunks])
     db.upsert_chunks(chunks, vectors, embedder_model_id=MODEL_ID)
+    db.dump_index_to_delta()
     log_event(logger, "info", "storyboards_indexed", chunk_count=len(chunks))
 
     print(f"{len(chunks)} storyboards indexed")

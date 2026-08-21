@@ -141,4 +141,5 @@ def silver_document_chunk(
             total.rows_rejected + stats.rows_rejected, stats.delta_version,
             total.duration_ms + stats.duration_ms,
         )
+    db.dump_index_to_delta()
     return MaterializeResult(metadata=total.as_metadata())

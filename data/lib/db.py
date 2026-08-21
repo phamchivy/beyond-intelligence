@@ -13,9 +13,11 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
+import pyarrow as pa
 from pgvector.psycopg import register_vector
 from psycopg.rows import dict_row
 
+from lib.delta import read_delta, table_version, write_delta
 from lib.settings import settings
 
 
@@ -214,6 +216,99 @@ def upsert_chunks(
                 """,
                 (chunk["chunk_id"], embedder_model_id, len(vector), vector),
             )
+
+
+# ============================================================ index snapshot (S3 backup/restore)
+
+_INDEX_SNAPSHOT_SCHEMA = pa.schema([
+    ("chunk_id", pa.string()),
+    ("document_id", pa.string()),
+    ("source_type", pa.string()),
+    ("chunk_index", pa.int32()),
+    ("content", pa.string()),
+    ("metadata", pa.string()),
+    ("embedder_model_id", pa.string()),
+    ("dimensions", pa.int32()),
+    ("embedding", pa.list_(pa.float32())),
+    ("created_at", pa.timestamp("us", tz="UTC")),
+])
+
+
+def dump_index_to_delta() -> int:
+    """Snapshot "index".chunk + "index".embedding to Delta on S3.
+
+    A backup, not a cache: it lets a fresh Postgres (a new volume, a new
+    machine) skip re-running the whole embed-and-index pipeline --
+    :func:`restore_index_from_delta` is the inverse. Overwrites the prior
+    snapshot every time, since this mirrors Postgres's current state
+    rather than logging its history.
+
+    Returns:
+        The Delta commit version this write produced.
+    """
+    with connection() as conn:
+        rows = conn.execute(
+            """
+            select c.chunk_id, c.document_id, c.source_type, c.chunk_index, c.content,
+                   c.metadata, c.created_at, e.embedder_model_id, e.dimensions, e.embedding
+            from "index".chunk c
+            join "index".embedding e using (chunk_id)
+            """
+        ).fetchall()
+
+    records = [
+        {
+            "chunk_id": r["chunk_id"],
+            "document_id": r["document_id"],
+            "source_type": r["source_type"],
+            "chunk_index": r["chunk_index"],
+            "content": r["content"],
+            "metadata": json.dumps(r["metadata"]),
+            "embedder_model_id": r["embedder_model_id"],
+            "dimensions": r["dimensions"],
+            "embedding": r["embedding"].to_list(),
+            "created_at": r["created_at"],
+        }
+        for r in rows
+    ]
+    table = pa.Table.from_pylist(records, schema=_INDEX_SNAPSHOT_SCHEMA)
+    return write_delta("index", "chunk", table, mode="overwrite")
+
+
+def restore_index_from_delta() -> int:
+    """Seed "index".chunk / "index".embedding from the last Delta snapshot on S3.
+
+    Safe to call on every startup against an already-populated index: a
+    missing snapshot is a no-op (:func:`lib.delta.table_version` returns
+    ``None``), and :func:`upsert_chunks` is already ON CONFLICT DO UPDATE,
+    so re-applying the same rows changes nothing.
+
+    Returns:
+        The number of chunk rows restored (0 if no snapshot exists yet).
+    """
+    if table_version("index", "chunk") is None:
+        return 0
+
+    rows = read_delta("index", "chunk").to_pylist()
+    by_model: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_model.setdefault(row["embedder_model_id"], []).append(row)
+
+    for embedder_model_id, group in by_model.items():
+        chunks = [
+            {
+                "chunk_id": r["chunk_id"],
+                "document_id": r["document_id"],
+                "source_type": r["source_type"],
+                "chunk_index": r["chunk_index"],
+                "content": r["content"],
+                "metadata": json.loads(r["metadata"]),
+            }
+            for r in group
+        ]
+        vectors = [r["embedding"] for r in group]
+        upsert_chunks(chunks, vectors, embedder_model_id=embedder_model_id)
+    return len(rows)
 
 
 # ============================================================ hybrid retrieval (architecture §10)

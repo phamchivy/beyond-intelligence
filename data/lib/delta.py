@@ -21,6 +21,11 @@ _LAYER_URLS = {
     "silver": lambda: settings.storage.silver_url,
     "gold": lambda: settings.storage.gold_url,
     "quarantine": lambda: settings.storage.quarantine_url,
+    # Not a pipeline layer -- a snapshot of the Postgres retrieval index,
+    # written by lib.db.dump_index_to_delta and read back by
+    # lib.db.restore_index_from_delta so a fresh Postgres doesn't need to
+    # re-run the whole embed-and-index pipeline.
+    "index": lambda: settings.storage.index_url,
 }
 
 
@@ -64,7 +69,7 @@ def table_uri(layer: str, name: str) -> str:
     """Build a Delta table URI from its layer and name, never string concatenation.
 
     Args:
-        layer: One of ``landing``, ``bronze``, ``silver``, ``gold``, ``quarantine``.
+        layer: One of ``landing``, ``bronze``, ``silver``, ``gold``, ``quarantine``, ``index``.
         name: The dataset or entity name, e.g. ``"orders"``.
 
     Returns:
@@ -80,7 +85,7 @@ def read_delta(layer: str, name: str, *, version: int | None = None) -> pa.Table
     """Read a Delta table as an Arrow table.
 
     Args:
-        layer: One of ``landing``, ``bronze``, ``silver``, ``gold``, ``quarantine``.
+        layer: One of ``landing``, ``bronze``, ``silver``, ``gold``, ``quarantine``, ``index``.
         name: The dataset or entity name.
         version: An optional Delta version to time-travel to.
 
@@ -103,7 +108,7 @@ def write_delta(
     """Write an Arrow table to Delta as one atomic commit.
 
     Args:
-        layer: One of ``landing``, ``bronze``, ``silver``, ``gold``, ``quarantine``.
+        layer: One of ``landing``, ``bronze``, ``silver``, ``gold``, ``quarantine``, ``index``.
         name: The dataset or entity name.
         table: The Arrow table to write.
         mode: ``"overwrite"`` or ``"append"``. Silver and Gold overwrite;
@@ -137,7 +142,7 @@ def table_version(layer: str, name: str) -> int | None:
     """Return a Delta table's current commit version, or None if it doesn't exist yet.
 
     Args:
-        layer: One of ``landing``, ``bronze``, ``silver``, ``gold``, ``quarantine``.
+        layer: One of ``landing``, ``bronze``, ``silver``, ``gold``, ``quarantine``, ``index``.
         name: The dataset or entity name.
 
     Returns:
