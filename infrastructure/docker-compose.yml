@@ -37,7 +37,7 @@ services:
         condition: service_healthy
 
   backend:
-    image: duytrong298/be-beyond-intelligence:demo-v1.0
+    image: duytrong298/be-beyond-intelligence:demo-v1.1
     container_name: beyond_backend
     ports: ["8000:8000"]
     environment:
