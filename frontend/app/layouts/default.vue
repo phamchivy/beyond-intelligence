@@ -2,55 +2,64 @@
 const { isDemoMode } = useApi()
 
 const navItems = [
-  { label: 'Overview', to: '/' },
-  { label: 'Workspace', to: '/workspace' },
-  { label: 'History', to: '/history' }
+  { label: 'Tổng quan', to: '/' },
+  { label: 'Workspace AI', to: '/workspace', badge: 'Flagship' },
+  { label: 'Chiến dịch / Briefs', to: '/briefs' },
+  { label: 'Lịch sử Video', to: '/history' }
 ]
 </script>
 
 <template>
-  <div class="min-h-screen bg-zinc-950 text-zinc-100">
-    <header class="sticky top-0 z-40 border-b border-white/10 bg-zinc-950/80 backdrop-blur-xl">
+  <div class="min-h-screen bg-slate-50 text-slate-900 dark:bg-zinc-950 dark:text-zinc-100 transition-colors">
+    <header class="sticky top-0 z-40 border-b border-slate-200 bg-white/80 backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-950/80">
       <div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3">
-        <NuxtLink to="/" class="flex items-center gap-3">
-          <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-sm font-bold text-white shadow-lg shadow-indigo-500/30">
+        <!-- Logo -->
+        <NuxtLink to="/workspace" class="flex items-center gap-3">
+          <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 via-indigo-500 to-violet-600 text-sm font-bold text-white shadow-lg shadow-indigo-500/25">
             BI
           </div>
           <div>
-            <p class="text-sm font-semibold text-white">Beyond Intelligence</p>
-            <p class="text-[10px] uppercase tracking-[0.22em] text-zinc-400">AI VIDEO STUDIO</p>
+            <p class="text-sm font-bold tracking-tight text-slate-900 dark:text-white">Beyond Intelligence</p>
+            <p class="text-[10px] font-semibold uppercase tracking-[0.2em] text-indigo-600 dark:text-indigo-400">AI VIDEO ENGINE</p>
           </div>
         </NuxtLink>
 
+        <!-- Navigation Links -->
         <nav class="hidden items-center gap-6 md:flex">
           <NuxtLink
             v-for="item in navItems"
             :key="item.to"
             :to="item.to"
-            class="text-sm text-zinc-300 transition hover:text-white"
-            active-class="text-indigo-300"
+            class="flex items-center gap-1.5 text-xs font-semibold text-slate-600 transition hover:text-indigo-600 dark:text-zinc-400 dark:hover:text-white"
+            active-class="text-indigo-600 dark:text-indigo-400 font-bold"
           >
-            {{ item.label }}
+            <span>{{ item.label }}</span>
+            <span v-if="item.badge" class="rounded bg-indigo-500/10 px-1.5 py-0.5 text-[9px] font-bold text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400">
+              {{ item.badge }}
+            </span>
           </NuxtLink>
         </nav>
 
+        <!-- Right Controls -->
         <div class="flex items-center gap-3">
-          <div class="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-2.5 py-1.5">
-            <span class="text-[10px] font-medium uppercase tracking-[0.2em] text-zinc-400">
-              {{ isDemoMode ? 'Demo' : 'Live' }}
+          <!-- Demo Mode Switcher -->
+          <div class="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-100 px-3 py-1 dark:border-zinc-800 dark:bg-zinc-900">
+            <span class="text-[10px] font-bold uppercase tracking-[0.18em]" :class="isDemoMode ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500'">
+              {{ isDemoMode ? 'Demo Mock' : 'Live Pods' }}
             </span>
-            <UToggle v-model="isDemoMode" size="sm" />
+            <USwitch v-model="isDemoMode" size="xs" />
           </div>
 
-          <UButton to="/workspace" color="primary" variant="solid" class="hidden sm:inline-flex">
-            New campaign
+          <UButton to="/workspace" color="primary" variant="solid" size="sm" icon="lucide:sparkles">
+            Tạo Video Ngay
           </UButton>
         </div>
       </div>
     </header>
 
-    <main class="mx-auto max-w-7xl px-4 py-8">
+    <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6">
       <slot />
     </main>
   </div>
 </template>
+

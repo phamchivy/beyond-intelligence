@@ -1,6 +1,6 @@
 <script setup>
 const title = 'Beyond Intelligence'
-const description = 'AI Short Video Ads Generator workspace for product storytelling, rendering, and campaign analytics'
+const description = 'Bảng điều khiển tạo video quảng cáo AI cho storytelling sản phẩm, render và phân tích chiến dịch.'
 
 useHead({
   titleTemplate: '%s',
@@ -12,7 +12,7 @@ useHead({
     { rel: 'icon', href: '/favicon.ico' }
   ],
   htmlAttrs: {
-    lang: 'en'
+    lang: 'vi'
   }
 })
 
