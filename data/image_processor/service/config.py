@@ -22,15 +22,14 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # S3 / MinIO. s3_endpoint=None -> boto3 resolves the real AWS endpoint
-    # for s3_region. Set it (e.g. http://minio:9000) only for local MinIO.
-    s3_endpoint: str | None = "http://localhost:9000"
-    s3_access_key: str = "minioadmin"
-    s3_secret_key: str = "minioadmin"
-    s3_region: str = "us-east-1"
-    # MinIO needs path-style forced (bucket-as-subdomain won't resolve
-    # against a bare host like minio:9000). Real AWS wants "auto".
-    s3_addressing_style: str = "path"
+    # S3 -- no local MinIO. s3_endpoint=None -> boto3 resolves the real
+    # AWS endpoint for s3_region. Only set it if pointing at a
+    # self-hosted S3-compatible store.
+    s3_endpoint: str | None = None
+    s3_access_key: str = ""
+    s3_secret_key: str = ""
+    s3_region: str = "ap-southeast-1"
+    s3_addressing_style: str = "auto"
     bucket_raw: str = "raw-assets"
     bucket_processed: str = "processed-assets"
     # When set: everything goes into this ONE real bucket, with
