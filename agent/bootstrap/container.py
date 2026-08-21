@@ -14,15 +14,44 @@ from __future__ import annotations
 
 from application.agent.agent import Agent
 from application.agent.agent_factory import build_agent
+from application.context.context_builder import ContextBuilder
 from application.services.decision_service import DecisionService
 from config.settings import LLMProvider, Settings
 from config.settings import settings as _default_settings
+from domain.entities.context import RetrievedDocument
 from domain.policies.decision_policy import DecisionPolicy
 from domain.policies.retry_policy import RetryPolicy
 from domain.policies.tool_policy import ToolPolicy
 from domain.ports.llm import LLM
+from domain.ports.retriever import Retriever
 from infrastructure.llm.gemini_provider import GeminiProvider
 from infrastructure.llm.mock_llm import MockLLM
+from infrastructure.retrieval.http_json_retriever import HttpJsonRetriever
+
+
+def _map_trending_videos_response(payload: dict) -> list[RetrievedDocument]:
+    """Map data/api.py's /api/v1/videos/trending response to RetrievedDocument list."""
+    return [
+        RetrievedDocument(
+            content=item["text"],
+            source=item.get("video_id") or item.get("id", ""),
+            score=item.get("relevance", 0.0),
+            metadata={"title": item.get("title"), "product_name": item.get("product_name")},
+        )
+        for item in payload.get("items", [])
+    ]
+
+
+def _build_retriever(config: Settings) -> Retriever | None:
+    """Build HttpJsonRetriever if retrieval_base_url is configured, else None."""
+    if not config.retrieval_base_url:
+        return None
+    return HttpJsonRetriever(base_url=config.retrieval_base_url, map_response=_map_trending_videos_response)
+
+
+def _build_context_builder(config: Settings) -> ContextBuilder:
+    """Build ContextBuilder with optional retriever."""
+    return ContextBuilder(retriever=_build_retriever(config), top_k=config.retrieval_top_k)
 
 
 def _build_llm(config: Settings) -> LLM:
@@ -82,6 +111,7 @@ def build_agent_from_settings(config: Settings | None = None) -> Agent:
         retry_policy=_build_retry_policy(cfg),
         tool_policy=_build_tool_policy(cfg),
         max_iterations=cfg.max_iterations,
+        context_builder=_build_context_builder(cfg),
     )
 
 

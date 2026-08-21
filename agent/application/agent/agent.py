@@ -10,6 +10,7 @@ neu la final_answer thi dung va tao Decision.
 """
 from __future__ import annotations
 
+from application.context.context_builder import ContextBuilder
 from application.execution.executor import ToolExecutionStatus, ToolExecutor
 from application.reasoning.reasoning_service import ReasoningService, ReasoningStepKind
 from domain.entities.agent_state import AgentState, Observation, StepStatus
@@ -42,17 +43,20 @@ class Agent:
         tool_executor: ToolExecutor,
         available_tools: tuple[ToolDefinition, ...] = (),
         max_iterations: int = 10,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         self._reasoning_service = reasoning_service
         self._tool_executor = tool_executor
         self._available_tools = available_tools
         self._max_iterations = max_iterations
+        self._context_builder = context_builder
 
     async def run(self, task: Task) -> Decision:
         from domain.entities.context import Context  # tranh vong lap import o muc module
 
         log_event(logger, "info", "agent_run_started", task_id=task.id, goal=task.goal)
-        state = AgentState(task=task, context=Context())
+        context = await self._context_builder.build(task) if self._context_builder else Context()
+        state = AgentState(task=task, context=context)
 
         for iteration in range(self._max_iterations):
             step = await self._reasoning_service.decide_next_step(state, self._available_tools)

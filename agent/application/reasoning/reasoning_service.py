@@ -103,6 +103,15 @@ class ReasoningService:
         if self._system_prompt:
             messages.append(LLMMessage(role=MessageRole.SYSTEM, content=self._system_prompt))
 
+        if state.context.retrieved_documents:
+            reference_block = "\n\n".join(doc.content for doc in state.context.retrieved_documents)
+            messages.append(
+                LLMMessage(
+                    role=MessageRole.SYSTEM,
+                    content=f"Reference trending videos (RAG):\n\n{reference_block}",
+                )
+            )
+
         messages.append(LLMMessage(role=MessageRole.USER, content=state.task.goal))
 
         # Dua lich su observation vao hoi thoai de LLM biet nhung gi da
