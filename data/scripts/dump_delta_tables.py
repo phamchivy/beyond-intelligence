@@ -1,9 +1,9 @@
-"""Dump Bronze/Silver Delta tables to a markdown file for quick inspection.
+"""Dump Bronze/Silver Delta tables to CSV for quick inspection.
 
 Run from `data/`::
 
     python -m scripts.dump_delta_tables
-    python -m scripts.dump_delta_tables --out snapshot.md
+    python -m scripts.dump_delta_tables --out-dir snapshots
 """
 
 from __future__ import annotations
@@ -18,32 +18,40 @@ from lib.delta import read_delta, table_version
 _TABLES = [("bronze", "tiktok_video"), ("silver", "video_storyboard")]
 
 
-def render_markdown() -> str:
-    """Render every table in ``_TABLES`` that exists as a markdown section.
+def dump_csv(out_dir: Path) -> list[Path]:
+    """Write every table in ``_TABLES`` that exists to its own CSV file.
+
+    Args:
+        out_dir: Directory to write into, created if missing.
 
     Returns:
-        One ``## layer/name`` section per existing table, each table's
-        rows as a fenced code block (polars' own repr -- no pandas/tabulate
-        dependency needed for a quick-look dump).
+        Paths written, one per existing table (``{layer}_{name}.csv``).
+        Empty if no table in ``_TABLES`` has been written yet.
     """
-    sections = []
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written = []
     for layer, name in _TABLES:
         if table_version(layer, name) is None:
             continue
         df = pl.from_arrow(read_delta(layer, name))
-        with pl.Config(tbl_rows=-1, tbl_cols=-1, fmt_str_lengths=200, tbl_width_chars=200):
-            sections.append(f"## {layer}/{name} ({df.height} rows)\n\n```\n{df}\n```")
-    return "\n\n".join(sections)
+        path = out_dir / f"{layer}_{name}.csv"
+        df.write_csv(path)
+        written.append(path)
+    return written
 
 
 def main() -> int:
-    """Parse arguments, render, write the markdown file."""
+    """Parse arguments, dump each existing table to its own CSV file."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--out", default="delta_snapshot.md", help="output .md path")
+    parser.add_argument("--out-dir", default=".", help="directory to write one CSV per table into")
     args = parser.parse_args()
 
-    Path(args.out).write_text(render_markdown())
-    print(f"written to {args.out}")
+    written = dump_csv(Path(args.out_dir))
+    if not written:
+        print("nothing to dump -- no Bronze/Silver tables written yet")
+        return 0
+    for path in written:
+        print(f"written to {path}")
     return 0
 
 

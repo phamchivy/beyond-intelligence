@@ -1,0 +1,29 @@
+# The daily Kalodata discover -> fetch -> analyze -> index pipeline.
+#
+# Only the pipeline's own runtime deps -- not the Dagster asset graph, dlt,
+# docling, or the test suite, which this image never imports. See
+# requirements-pipeline.txt.
+FROM python:3.12-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends cron \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    FASTEMBED_CACHE_PATH=/opt/fastembed
+
+WORKDIR /app
+COPY requirements-pipeline.txt .
+RUN pip install --no-cache-dir -r requirements-pipeline.txt
+
+# Only what the pipeline's import graph actually touches (see
+# scripts/kalodata_*.py, scripts/index_storyboards.py) -- not defs/, sql/,
+# tests/, business/, evaluation/.
+COPY scripts/ scripts/
+COPY lib/ lib/
+COPY contracts/ contracts/
+COPY docker/cron-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

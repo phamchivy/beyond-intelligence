@@ -1,0 +1,22 @@
+# Runtime deps for the daily Kalodata pipeline only -- not the Dagster
+# asset graph or the test suite, which use the full requirements.txt.
+# Keep this in sync with what scripts/kalodata_*.py and
+# scripts/index_storyboards.py actually import (httpx for Kalodata calls,
+# yt-dlp for video download, polars/pyarrow/deltalake/s3fs for
+# Landing/Bronze/Silver, psycopg/pgvector/fastembed for the retrieval
+# index, pandera[polars] for the video_storyboard contract, google-genai
+# for storyboard analysis) -- nothing here should be added "just in case".
+
+httpx>=0.27
+yt-dlp>=2026.1
+polars>=1.43
+pyarrow>=25.0
+deltalake>=1.0
+s3fs>=2026.7
+psycopg[binary]>=3.3
+pgvector>=0.5
+pandera[polars]>=0.32
+google-genai>=1.0
+fastembed>=0.8
+pydantic>=2.13
+pydantic-settings>=2.15

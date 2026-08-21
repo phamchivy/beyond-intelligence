@@ -9,6 +9,7 @@ from __future__ import annotations
 import fnmatch
 from pathlib import Path
 
+import polars as pl
 import pytest
 import yt_dlp
 
@@ -72,9 +73,16 @@ _ROW_B = {
 
 @pytest.fixture(autouse=True)
 def _no_real_download(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Point yt_dlp.YoutubeDL at the fake, and reset its failure set each test."""
+    """Point yt_dlp.YoutubeDL at the fake, and reset its failure set each test.
+
+    Also default Bronze to "doesn't exist yet" -- otherwise
+    ``download_top_videos``'s cross-day dedup check would make a real
+    Delta/S3 call every test. Tests that care about existing Bronze rows
+    override ``table_version``/``read_delta`` themselves.
+    """
     _FakeYoutubeDL.fail_urls = set()
     monkeypatch.setattr(d.yt_dlp, "YoutubeDL", _FakeYoutubeDL)
+    monkeypatch.setattr(d, "table_version", lambda *a, **kw: None)
 
 
 def test_slug_collapses_unsafe_characters():
@@ -167,6 +175,26 @@ def test_bronze_row_carries_the_kalodata_metrics_through(monkeypatch: pytest.Mon
     assert {r["video_id"] for r in rows} == {"v1", "v2"}
     assert rows[0]["revenue"] in (100.0, 50.0)  # the Kalodata metric survived
     assert rows[0]["category_name"] == "Beauty"
+
+
+def test_a_video_already_in_bronze_from_any_day_is_skipped_before_yt_dlp_runs(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A video still trending on day 2 must not be re-downloaded from scratch."""
+    monkeypatch.setattr(d, "top_videos", lambda keyword, **kw: [_ROW_A, _ROW_B])
+    monkeypatch.setattr(d, "s3_filesystem", lambda: _FakeS3())
+    monkeypatch.setattr(d, "table_version", lambda *a, **kw: 0)
+    monkeypatch.setattr(
+        d, "read_delta", lambda *a, **kw: pl.DataFrame({"video_id": ["v1"]}).to_arrow()
+    )
+
+    results = d.download_top_videos("electric shaver", limit=2)
+
+    by_id = {r.video_id: r for r in results}
+    assert by_id["v1"].skipped is True
+    assert by_id["v1"].downloaded is False
+    assert by_id["v1"].row is None
+    assert by_id["v2"].downloaded is True  # not in Bronze yet -- still fetched
 
 
 def test_write_bronze_is_a_noop_when_nothing_downloaded():

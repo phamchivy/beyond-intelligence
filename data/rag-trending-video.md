@@ -1,16 +1,49 @@
 # RAG: Trending Video Storyboards
 
 How `GET/POST /api/v1/videos/trending` turns a product/category keyword into ranked,
-scene-by-scene TikTok video references. Two halves: an offline pipeline that builds
-the index (run by hand, not yet Dagster-scheduled), and the online query the API
-serves.
+scene-by-scene TikTok video references. Three parts: a **daily pipeline** that decides
+*what* to fetch, an **offline chain** that turns a keyword into indexed storyboards, and
+the **online query** the API serves.
 
-## Offline: building the index
+## Daily: deciding what to fetch
+
+[scripts/kalodata_daily_pipeline.py](scripts/kalodata_daily_pipeline.py), run once a day
+by a cron-triggered container (`kalodata-cron` in [docker-compose.yml](docker-compose.yml),
+`03:00 UTC`, see [Dockerfile.pipeline](Dockerfile.pipeline)):
+
+1. **Discover** — `kalodata_top_videos.discover_keywords()` calls Kalodata's
+   `category/rank` (leaf categories, sorted by revenue) then `product/rank` per category
+   (also sorted by revenue) — the same two endpoints the offline chain's `_resolve_product`
+   already calls, just without a `keyword` filter. Both endpoints rank by revenue on
+   their own, which *is* "what's trending" without a human naming a product first.
+   Returns a deduplicated list of trending product names.
+2. For each discovered name, runs the offline chain below exactly as if a person had
+   typed it as a keyword — discovery only replaces *how* a keyword is chosen, nothing
+   downstream knows the difference.
+3. Runs the analyze and index steps **once**, after every keyword's videos are fetched,
+   not once per keyword.
+
+A video still trending on its second or third day is recognized from Bronze and not
+re-downloaded (`kalodata_download_videos._bronze_video_ids()`) — the original
+same-day-only check (`_existing_key`, matched against today's S3 prefix) was fine for a
+human re-running the CLI once, but a daily unattended job needs an all-time check or it
+re-fetches the same viral video every day it stays popular.
+
+**This calls real, metered APIs on a schedule, unattended, indefinitely**: Kalodata
+(rate-limited), `yt-dlp` against real TikTok URLs, and Gemini (billed per video analyzed).
+`KALODATA_DISCOVER_TOP_CATEGORIES` / `KALODATA_DISCOVER_PRODUCTS_PER_CATEGORY`
+(`lib/settings.py`, defaults 5 and 2 — 10 keywords/day) bound how much new content one
+run can pull in, and are the knob to turn if Gemini spend needs capping.
+
+## Offline: keyword → indexed storyboards
 
 ```
 kalodata_top_videos.py → kalodata_download_videos.py → kalodata_analyze_videos.py → index_storyboards.py
     (rank)                    (fetch .mp4)                  (Gemini storyboard)         (embed + upsert)
 ```
+
+Runs by hand too (`python -m scripts.<name>`) for one-off/manual keywords — the daily
+pipeline above is a scheduled caller of this same chain, not a replacement for it.
 
 1. **Rank** — [scripts/kalodata_top_videos.py](scripts/kalodata_top_videos.py) calls
    the Kalodata Open API (TikTok Shop analytics). A product keyword resolves to a
@@ -23,8 +56,8 @@ kalodata_top_videos.py → kalodata_download_videos.py → kalodata_analyze_vide
    per video to Bronze `tiktok_video`: revenue, views, `ai_video` flag, `ad` flag
    (paid vs organic), `digg_count`/`share_count`/`comment_count`, `creator_debut` (the
    video's real publish date), category/product name, and `fetched_at` (when *we*
-   downloaded it — not the same thing as `creator_debut`). Already-fetched videos
-   (matched by `video_id`) are skipped.
+   downloaded it — not the same thing as `creator_debut`). A video already in Bronze
+   from any previous run (matched by `video_id`) is skipped before `yt-dlp` ever runs.
 
 3. **Analyze** — [scripts/kalodata_analyze_videos.py](scripts/kalodata_analyze_videos.py)
    sends each new video's bytes and known duration to Gemini ([lib/gemini.py](lib/gemini.py)),
@@ -166,6 +199,8 @@ kalodata_top_videos.py → kalodata_download_videos.py → kalodata_analyze_vide
   what it returns; no post-hoc de-duplication across a video's scenes.
 - **Metadata carries the whole storyboard** — the query path never touches S3 or
   Delta; everything needed to answer is already sitting in Postgres `index.chunk`.
-- **Not Dagster-scheduled** — the four offline scripts are run by hand
-  (`python -m scripts.<name>`); nothing in [defs/](defs/) currently schedules the
-  Kalodata fetch → analyze → index chain.
+- **Cron, not Dagster, runs this daily** — `defs/` has a Dagster schedule
+  (`daily_full_refresh`) but no daemon anywhere actually runs it unattended (only
+  `dagster dev` on a laptop); a plain cron-triggered container ships today without
+  standing up a new daemon service. The four scripts stay callable by hand
+  (`python -m scripts.<name>`) for one-off/manual keywords either way.

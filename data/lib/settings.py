@@ -155,6 +155,12 @@ class KalodataSettings(BaseSettings):
     language: str = "en-US"
     currency: str = "USD"
 
+    # Auto-discovery (the daily pipeline) -- kept modest to bound Gemini
+    # spend: discover_top_categories * discover_products_per_category
+    # keywords get analyzed per day.
+    discover_top_categories: int = 5
+    discover_products_per_category: int = 2
+
 
 class GeminiSettings(BaseSettings):
     """Gemini video understanding -- the only model that reads the .mp4 directly.

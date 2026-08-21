@@ -10,9 +10,8 @@ metrics that made it interesting. Run from `data/`::
 Blobs land at
 ``trending_tiktok_videos/landing/{category}/{product}/{date}/{title}_{video_id}_{timestamp}.mp4``;
 one row per video is appended to the Bronze table ``tiktok_video``. A
-video already fetched for that category/product/day is skipped, not
-re-downloaded -- matched by ``video_id`` inside the filename, since the
-timestamp changes on every run.
+video already fetched -- today, or on any previous day this has run -- is
+skipped, not re-downloaded, matched by ``video_id`` against Bronze itself.
 
 This fetches TikTok videos into private storage for internal analysis.
 That is ordinary research use, but it is not something TikTok's terms
@@ -34,7 +33,7 @@ import polars as pl
 import pyarrow as pa
 import yt_dlp
 
-from lib.delta import s3_filesystem, sha256_file, write_delta
+from lib.delta import read_delta, s3_filesystem, sha256_file, table_version, write_delta
 from lib.logging import get_logger, log_event
 from lib.settings import settings
 from scripts.kalodata_top_videos import top_videos
@@ -199,6 +198,19 @@ def _download_one(fs, row: dict, keyword: str, prefix: str, timestamp: str) -> F
     )
 
 
+def _bronze_video_ids() -> set[str]:
+    """Every video_id already in Bronze ``tiktok_video``, any date.
+
+    ``_existing_key`` only catches a re-run for *today's* prefix; a video
+    still trending on its second or third day would otherwise be
+    re-downloaded from scratch every day this runs.
+    """
+    if table_version("bronze", "tiktok_video") is None:
+        return set()
+    df = pl.from_arrow(read_delta("bronze", "tiktok_video"))
+    return set(df.get_column("video_id").unique().to_list())
+
+
 def download_top_videos(
     keyword: str, *, date_range: str = "last30Day", limit: int = 10
 ) -> list[FetchResult]:
@@ -212,7 +224,8 @@ def download_top_videos(
     Returns:
         One :class:`FetchResult` per ranked video, in ranked order. A
         failed download does not stop the rest -- one dead video must not
-        lose the other nine.
+        lose the other nine. A video already present in Bronze from any
+        previous run is skipped before ``yt-dlp`` is ever invoked.
     """
     rows = top_videos(keyword, date_range=date_range, limit=limit)
     if not rows:
@@ -227,8 +240,16 @@ def download_top_videos(
     prefix = _day_prefix(rows[0]["category_name"], rows[0]["product_name"], date_str)
     timestamp = now.strftime("%Y%m%dT%H%M%SZ")
 
+    known_ids = _bronze_video_ids()
     fs = s3_filesystem()
-    return [_download_one(fs, row, keyword, prefix, timestamp) for row in rows]
+    results = []
+    for row in rows:
+        if row["video_id"] in known_ids:
+            log_event(logger, "info", "video_skipped_existing", video_id=row["video_id"])
+            results.append(FetchResult(row["video_id"], None, downloaded=False, skipped=True))
+            continue
+        results.append(_download_one(fs, row, keyword, prefix, timestamp))
+    return results
 
 
 def _write_bronze(results: list[FetchResult]) -> int | None:
@@ -244,7 +265,10 @@ def _write_bronze(results: list[FetchResult]) -> int | None:
     if not new_rows:
         return None
     table: pa.Table = pl.DataFrame(new_rows).to_arrow()
-    return write_delta("bronze", "tiktok_video", table, mode="append")
+    # merge: ad/digg_count/share_count/comment_count/creator_debut are a
+    # deliberate additive change over rows already on S3 from before those
+    # columns existed (decision 8.19, same reasoning as Silver's hook_style).
+    return write_delta("bronze", "tiktok_video", table, mode="append", schema_mode="merge")
 
 
 def main() -> int:

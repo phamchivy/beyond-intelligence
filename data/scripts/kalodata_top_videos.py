@@ -36,6 +36,10 @@ _MIN_PAGE_SIZE = 5
 # stay behind it as fallbacks.
 _CATEGORY_KEYS = ("ter_cate_id", "sec_cate_id", "pri_cate_id")
 
+# category/rank's category_level: 1 = top, 2 = mid, 3 = leaf. Leaf categories
+# are the most specific "what's actually trending" signal.
+_LEAF_CATEGORY_LEVEL = 3
+
 
 def _post(client: httpx.Client, path: str, payload: dict) -> list | dict:
     """POST one Kalodata endpoint and return its ``data`` payload.
@@ -232,6 +236,71 @@ def top_videos(keyword: str, *, date_range: str = "last30Day", limit: int = 10) 
             to_row(v, product_name=product_name, category_name=category_name)
             for v in videos[:limit]
         ]
+
+
+def discover_keywords(
+    *,
+    date_range: str = "last30Day",
+    top_categories: int | None = None,
+    products_per_category: int | None = None,
+) -> list[str]:
+    """Auto-discover today's trending product names -- no keyword needed.
+
+    Calls the same ``category/rank`` and ``product/rank`` endpoints
+    :func:`_resolve_product` uses, minus the ``keyword`` filter: both
+    endpoints rank by revenue on their own, which is exactly "what's
+    trending" without a human naming a product first. Callers pass the
+    returned names straight into :func:`top_videos` /
+    :func:`scripts.kalodata_download_videos.download_top_videos` as if a
+    person had typed them.
+
+    Args:
+        date_range: A Kalodata date range. Ranking endpoints cap the
+            window at 30 days, so ``last30Day`` is the widest useful value.
+        top_categories: How many leaf categories to consider. Defaults to
+            ``settings.kalodata.discover_top_categories``.
+        products_per_category: How many top products to take from each
+            category. Defaults to
+            ``settings.kalodata.discover_products_per_category``.
+
+    Returns:
+        Product name strings, highest-revenue category first and
+        highest-revenue product within it first, de-duplicated (the same
+        product can rank in more than one category).
+
+    Raises:
+        RuntimeError: If the API key is unset or the API reports failure.
+    """
+    top_categories = top_categories or settings.kalodata.discover_top_categories
+    products_per_category = (
+        products_per_category or settings.kalodata.discover_products_per_category
+    )
+    if not settings.kalodata.api_key.get_secret_value():
+        raise RuntimeError("KALODATA_API_KEY is unset -- add it to data/.env")
+
+    headers = {"secret-key": settings.kalodata.api_key.get_secret_value()}
+    with httpx.Client(timeout=_TIMEOUT, headers=headers) as client:
+        categories = _post(client, "category/rank", {
+            "date_range": date_range,
+            "sort_field": {"field": "revenue", "type": "DESC"},
+            "page_size": max(top_categories, _MIN_PAGE_SIZE),
+            "page_number": 1,
+            "category_level": _LEAF_CATEGORY_LEVEL,
+        })
+
+        keywords = []
+        for category in categories[:top_categories]:
+            products = _post(client, "product/rank", {
+                "date_range": date_range,
+                "sort_field": {"field": "revenue", "type": "DESC"},
+                "page_size": max(products_per_category, _MIN_PAGE_SIZE),
+                "page_number": 1,
+                "category_ids": [category["category_id"]],
+            })
+            keywords.extend(p["product_name"] for p in products[:products_per_category])
+
+    seen: set[str] = set()
+    return [k for k in keywords if not (k in seen or seen.add(k))]
 
 
 def main() -> int:

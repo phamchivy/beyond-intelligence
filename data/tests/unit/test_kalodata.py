@@ -215,3 +215,71 @@ def test_api_failure_raises_even_though_http_status_is_200(stub_client):
     })
     with pytest.raises(RuntimeError, match="The key is not allowed"):
         k.top_videos("electric shaver")
+
+
+def _discover_handler(routes: dict[str, dict]):
+    """Route category/rank once, product/rank once per category_ids payload.
+
+    Unlike ``_responder`` (routes purely by path), discovery calls
+    ``product/rank`` more than once with different bodies, so this keys off
+    the request payload's ``category_ids`` too.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path.rsplit("/openapi/v1/tiktok/", 1)[-1]
+        body = json.loads(request.content)
+        assert "keyword" not in body  # discovery must never filter by keyword
+        if path == "category/rank":
+            return httpx.Response(200, json=routes["category/rank"])
+        if path == "product/rank":
+            category_id = body["category_ids"][0]
+            return httpx.Response(200, json=routes["product/rank"][category_id])
+        raise AssertionError(f"unexpected path {path!r}")
+
+    return httpx.MockTransport(handler)
+
+
+def test_discover_keywords_finds_top_products_across_top_categories(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings.kalodata, "discover_top_categories", 2)
+    monkeypatch.setattr(settings.kalodata, "discover_products_per_category", 1)
+    transport = _discover_handler({
+        "category/rank": {"success": True, "data": [
+            {"category_id": "cat-1", "category_name": "Beauty"},
+            {"category_id": "cat-2", "category_name": "Electronics"},
+        ]},
+        "product/rank": {
+            "cat-1": {"success": True, "data": [{"product_id": "p1", "product_name": "Nebulizer"}]},
+            "cat-2": {"success": True,
+                      "data": [{"product_id": "p2", "product_name": "Bluetooth Speaker"}]},
+        },
+    })
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        k.httpx, "Client", lambda **kw: real_client(**{**kw, "transport": transport}),
+    )
+
+    assert k.discover_keywords() == ["Nebulizer", "Bluetooth Speaker"]
+
+
+def test_discover_keywords_dedupes_a_product_ranked_in_two_categories(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(settings.kalodata, "discover_top_categories", 2)
+    monkeypatch.setattr(settings.kalodata, "discover_products_per_category", 1)
+    transport = _discover_handler({
+        "category/rank": {"success": True, "data": [
+            {"category_id": "cat-1", "category_name": "Beauty"},
+            {"category_id": "cat-2", "category_name": "Beauty Sub"},
+        ]},
+        "product/rank": {
+            "cat-1": {"success": True, "data": [{"product_id": "p1", "product_name": "Nebulizer"}]},
+            "cat-2": {"success": True, "data": [{"product_id": "p1", "product_name": "Nebulizer"}]},
+        },
+    })
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        k.httpx, "Client", lambda **kw: real_client(**{**kw, "transport": transport}),
+    )
+
+    assert k.discover_keywords() == ["Nebulizer"]

@@ -26,5 +26,19 @@ services:
       postgres:
         condition: service_healthy
 
+  # Daily discover -> fetch -> analyze -> index pipeline (rag-trending-video.md).
+  # Runs on its own cron schedule inside the container (03:00 UTC); this
+  # service just needs to stay up for that scheduler to exist.
+  kalodata-cron:
+    build:
+      context: .
+      dockerfile: Dockerfile.pipeline
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://bi:bi@postgres:5432/bi
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   pgdata: {}
