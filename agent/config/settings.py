@@ -82,6 +82,7 @@ class LLMProvider(str, Enum):
     GEMINI = "gemini"
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
+    DEEPSEEK = "deepseek"  # qua BytePlus ModelArk (endpoint OpenAI-compatible)
     MOCK = "mock"  # dung cho test/dev khong can goi API that
 
 
@@ -122,6 +123,14 @@ class LLMSettings(_BaseAppSettings):
     gemini_api_key: SecretStr | None = Field(default=None)
     openai_api_key: SecretStr | None = Field(default=None)
     anthropic_api_key: SecretStr | None = Field(default=None)
+    deepseek_api_key: SecretStr | None = Field(default=None)  # that ra la BytePlus ModelArk key
+
+    # Endpoint tuy chinh -- CHI can cho provider dung dinh dang OpenAI-
+    # compatible qua base_url rieng (vd: DeepSeek qua BytePlus ModelArk).
+    # Gemini khong dung truong nay (GeminiProvider tu dung endpoint mac
+    # dinh cua SDK google-genai). Da xac nhan tu tai lieu API chinh
+    # thuc cua BytePlus (khong phai doan) nen dat lam default duoc.
+    base_url: str | None = Field(default="https://ark.ap-southeast.bytepluses.com/api/v3")
 
     def require_api_key(self) -> SecretStr:
         """
@@ -133,6 +142,7 @@ class LLMSettings(_BaseAppSettings):
             LLMProvider.GEMINI: self.gemini_api_key,
             LLMProvider.OPENAI: self.openai_api_key,
             LLMProvider.ANTHROPIC: self.anthropic_api_key,
+            LLMProvider.DEEPSEEK: self.deepseek_api_key,
         }
         key = key_map.get(self.provider)
         if key is None:
@@ -153,38 +163,21 @@ class VideoRendererSettings(_BaseAppSettings):
     model_config = SettingsConfigDict(env_prefix="VIDEO_")
 
     provider: str = "seedance"
-    # Khong dat default cho model/base_url vi chua xac nhan gia tri
-    # chinh xac tren BytePlus ModelArk -- nhung cung KHONG bat buoc
-    # cung (khong dung `str` khong default) vi settings duoc khoi tao
-    # EAGER (settings = Settings() chay ngay luc import file nay) --
-    # bat buoc cung se lam VO moi module khac import settings, ke ca
-    # khong lien quan gi den video. Dung lai dung pattern voi api_key:
-    # Optional + ham require_config() bao loi luc THAT SU dung, khong
-    # phai luc khoi dong toan bo settings.
-    model: str | None = Field(default=None)
-    base_url: str | None = Field(default=None)
+    # Da xac nhan tu tai lieu "Danh sach mo hinh API ho tro" (BytePlus)
+    # nguoi dung cung cap -- khong con la doan nua, dat lam default.
+    model: str = "dreamina-seedance-2-0-260128"
+    base_url: str = "https://ark.ap-southeast.bytepluses.com/api/v3"
     api_key: SecretStr | None = Field(default=None)
     timeout_seconds: float = Field(default=120.0, gt=0)  # sinh video lau hon LLM, timeout dai hon
 
     def require_config(self) -> tuple[str, str, SecretStr]:
         """
         Goi ham nay o infrastructure/video/seedance_renderer.py TRUOC
-        khi dung -- bao loi ro rang neu thieu bat ky truong bat buoc
-        nao, thay vi de loi mo ho luc goi API that.
+        khi dung -- bao loi ro rang neu thieu API key, thay vi de loi
+        mo ho luc goi API that. model/base_url gio da co default that
+        (xac nhan tu tai lieu), chi con api_key la BAT BUOC nguoi dung
+        tu dien (secret, khong the co default).
         """
-        missing = [
-            env_name
-            for env_name, value in [
-                ("VIDEO_MODEL", self.model),
-                ("VIDEO_BASE_URL", self.base_url),
-            ]
-            if value is None
-        ]
-        if missing:
-            raise ValueError(
-                f"Thieu cau hinh video renderer: {', '.join(missing)}. "
-                f"Hay khai bao trong file .env."
-            )
         return self.model, self.base_url, self.require_api_key()
 
     def require_api_key(self) -> SecretStr:
