@@ -4,8 +4,7 @@ import type {
   StoryboardReviewPayload,
   StoryboardReviewResponse,
   RenderStatusResponse,
-  DashboardOverviewResponse,
-  StoryboardPlan
+  DashboardOverviewResponse
 } from '../types/brief'
 
 export interface UploadBriefAssetPayload {
@@ -128,131 +127,23 @@ export const usePipelineApi = () => {
       })
     }
 
-    try {
-      return await fetchApi<SubmitBriefResponse>('/pipeline/submit-brief', {
-        method: 'POST',
-        body: formData
-      })
-    } catch (error) {
-      console.warn('[pipeline.submit-brief] Dùng fallback demo storyboard', error)
-      const mockTaskId = `task-${Date.now()}`
-      const mockStoryboardId = `story-${Date.now()}`
-
-      const mockPlan: StoryboardPlan = {
-        scenes: [
-          {
-            scene_number: 1,
-            duration_ms: 3000,
-            visual_description: `Cận cảnh mở đầu ấn tượng với vấn đề nổi cộm: "${payload.keyMessage}". Chuyển cảnh nhanh với hiệu ứng zoom.`,
-            audio_script: `Bạn có đang tìm kiếm giải pháp đột phá cho ${payload.productCategory || 'cuộc sống'}?`,
-            suggested_asset: 'hero'
-          },
-          {
-            scene_number: 2,
-            duration_ms: 4500,
-            visual_description: `Trải nghiệm thực tế sản phẩm ${payload.productName}. Xuất hiện icon nổi bật tính năng USP: "${payload.productUsp}".`,
-            audio_script: `Khám phá ngay ${payload.productName} với ${featuresArray[0] || payload.productUsp}.`,
-            suggested_asset: 'closeup'
-          },
-          {
-            scene_number: 3,
-            duration_ms: 4500,
-            visual_description: `Lifestyle shot: Người dùng tươi cười, hài lòng khi trải nghiệm sự khác biệt. Hiệu ứng text pop-up bắt mắt.`,
-            audio_script: `Hiệu quả rõ rệt, tiết kiệm thời gian và tối ưu chi phí cho bạn.`,
-            suggested_asset: 'lifestyle'
-          },
-          {
-            scene_number: 4,
-            duration_ms: 3000,
-            visual_description: `Màn hình kết thúc với Logo thương hiệu, thông tin ưu đãi "${payload.productOffer || 'Ưu đãi có hạn'}" và CTA nổi bật.`,
-            audio_script: `${payload.requiredCta || 'Bấm vào link bên dưới để nhận ưu đãi ngay hôm nay!'}`,
-            suggested_asset: 'logo'
-          }
-        ],
-        soundtrack: 'Upbeat Tech Trending Beats (128 BPM)',
-        voiceover_tone: 'Năng động, tự tin, truyền cảm hứng'
-      }
-
-      return {
-        taskId: mockTaskId,
-        storyboardId: mockStoryboardId,
-        revisionNumber: 1,
-        plan: mockPlan,
-        taskStatus: 'storyboard_review'
-      }
-    }
+    return await fetchApi<SubmitBriefResponse>('/pipeline/submit-brief', {
+      method: 'POST',
+      body: formData
+    })
   }
 
   // 4. HITL Review Storyboard (POST /api/v1/pipeline/review-storyboard)
   const reviewStoryboard = async ({ taskId, storyboardId, decision, feedback }: StoryboardReviewPayload): Promise<StoryboardReviewResponse> => {
-    try {
-      return await fetchApi<StoryboardReviewResponse>('/pipeline/review-storyboard', {
-        method: 'POST',
-        body: {
-          taskId,
-          storyboardId,
-          decision, // 'approved' | 'needs_revision' | 'rejected'
-          feedback: feedback || ''
-        }
-      })
-    } catch (error) {
-      console.warn('[pipeline.review-storyboard] Dùng fallback demo review', error)
-      if (decision === 'approved') {
-        return {
-          status: 'render_processing',
-          render_job_id: `render-${Date.now()}`
-        }
+    return await fetchApi<StoryboardReviewResponse>('/pipeline/review-storyboard', {
+      method: 'POST',
+      body: {
+        taskId,
+        storyboardId,
+        decision, // 'approved' | 'needs_revision' | 'rejected'
+        feedback: feedback || ''
       }
-
-      if (decision === 'needs_revision') {
-        const revisedPlan: StoryboardPlan = {
-          scenes: [
-            {
-              scene_number: 1,
-              duration_ms: 3000,
-              visual_description: `[Đã chỉnh sửa theo phản hồi] Mở đầu trực diện với hook sắc nét hơn: "${feedback || 'Tăng tốc nhịp điệu'}".`,
-              audio_script: `Đừng bỏ lỡ giải pháp tối ưu nhất năm nay!`,
-              suggested_asset: 'hero'
-            },
-            {
-              scene_number: 2,
-              duration_ms: 4000,
-              visual_description: `Cận cảnh chi tiết tính năng đã được điều chỉnh. Text overlay rõ ràng, tương phản cao.`,
-              audio_script: `Trải nghiệm chất lượng vượt trội được người dùng tin cậy.`,
-              suggested_asset: 'closeup'
-            },
-            {
-              scene_number: 3,
-              duration_ms: 4000,
-              visual_description: `Cảnh quay lifestyle nhịp điệu nhanh, đồng bộ với âm nhạc.`,
-              audio_script: `Sự lựa chọn hoàn hảo dành riêng cho bạn.`,
-              suggested_asset: 'lifestyle'
-            },
-            {
-              scene_number: 4,
-              duration_ms: 4000,
-              visual_description: `Khóa chốt CTA mạnh mẽ, sticker ưu đãi chớp nháy thu hút click.`,
-              audio_script: `Nhận ngay ưu đãi độc quyền hôm nay!`,
-              suggested_asset: 'logo'
-            }
-          ],
-          soundtrack: 'Energetic High-tempo Viral TikTok Mix',
-          voiceover_tone: 'Sôi nổi, cuốn hút, dứt khoát'
-        }
-
-        return {
-          status: 'storyboard_review',
-          storyboard_id: `story-${Date.now()}`,
-          revision_number: 2,
-          plan: revisedPlan
-        }
-      }
-
-      return {
-        status: 'cancelled',
-        message: 'Chiến dịch đã được hủy bỏ.'
-      }
-    }
+    })
   }
 
   // 5. Polling tiến trình Render (GET /api/v1/renders/{id})
@@ -262,16 +153,7 @@ export const usePipelineApi = () => {
 
   // 6. Lấy số liệu KPI Dashboard (GET /api/v1/dashboard/overview)
   const getDashboardOverview = async (): Promise<DashboardOverviewResponse> => {
-    try {
-      return await fetchApi<DashboardOverviewResponse>('/dashboard/overview')
-    } catch {
-      return {
-        totalRevenue: 45200.5,
-        profitMargin: 22.4,
-        activeCampaigns: 8,
-        riskLevel: 'MEDIUM'
-      }
-    }
+    return await fetchApi<DashboardOverviewResponse>('/dashboard/overview')
   }
 
   return {
@@ -284,4 +166,5 @@ export const usePipelineApi = () => {
     getDashboardOverview
   }
 }
+
 

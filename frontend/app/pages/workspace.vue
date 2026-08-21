@@ -2,7 +2,8 @@
 import type { BriefForm, StoryboardPlan, StoryboardScene } from '../types/brief'
 
 const { submitBriefForReview, reviewStoryboard, getRenderStatus } = usePipelineApi()
-const toast = useToast?.()
+const { getApiErrorMessage } = useApi()
+const toast = useToast()
 
 // Preset Templates cho Quick Demo
 const presets = [
@@ -78,10 +79,32 @@ const presets = [
 ]
 
 // Form State
-const form = reactive<BriefForm>({
+interface WorkspaceFormState {
+  productName: string
+  productCategory: string
+  productPrice: number
+  productUsp: string
+  productFeatures: string
+  productOffer: string
+  allowedClaims: string
+  audienceProfile: string
+  objective: string
+  keyMessage: string
+  channel: string
+  aspectRatio: string
+  creativeReference: string
+  maxDurationMs: number
+  language: string
+  requiredCta: string
+  bannedClaims: string
+  bannedContent: string
+  assets: File[]
+}
+
+const form = reactive<WorkspaceFormState>({
   productName: '',
   productCategory: '',
-  productPrice: '',
+  productPrice: 0,
   productUsp: '',
   productFeatures: '',
   productOffer: '',
@@ -109,21 +132,23 @@ const tabItems = [
 ]
 
 // Asset Upload Management
-const assetTypes = [
+type AssetKey = 'hero' | 'closeup' | 'lifestyle' | 'logo'
+
+const assetTypes: Array<{ key: AssetKey, label: string, desc: string }> = [
   { key: 'hero', label: 'Ảnh Hero (Sản phẩm chính)', desc: 'Ảnh chụp rõ nét nổi bật' },
   { key: 'closeup', label: 'Cận cảnh (Detail / Texture)', desc: 'Chất liệu, bao bì, tem mác' },
   { key: 'lifestyle', label: 'Lifestyle (Bối cảnh thực tế)', desc: 'Người dùng đang trải nghiệm' },
   { key: 'logo', label: 'Logo Thương hiệu', desc: 'File PNG nền trong suốt' }
 ]
 
-const uploadedFiles = reactive<Record<string, Array<{ file: File, preview: string }>>>({
+const uploadedFiles = reactive<Record<AssetKey, Array<{ file: File, preview: string }>>>({
   hero: [],
   closeup: [],
   lifestyle: [],
   logo: []
 })
 
-const handleFileUpload = (typeKey: string, event: Event) => {
+const handleFileUpload = (typeKey: AssetKey, event: Event) => {
   const target = event.target as HTMLInputElement
   if (target.files && target.files.length > 0) {
     Array.from(target.files).forEach(file => {
@@ -133,8 +158,8 @@ const handleFileUpload = (typeKey: string, event: Event) => {
   }
 }
 
-const removeFile = (typeKey: string, index: number) => {
-  const item = uploadedFiles[typeKey][index]
+const removeFile = (typeKey: AssetKey, index: number) => {
+  const item = uploadedFiles[typeKey]?.[index]
   if (item) {
     URL.revokeObjectURL(item.preview)
     uploadedFiles[typeKey].splice(index, 1)
@@ -165,6 +190,7 @@ const runSmartAutoFill = () => {
     isAutoFilling.value = false
   }, 600)
 }
+
 
 // Pipeline Generation & Workflow State
 // flowState: 'idle' | 'generating' | 'review' | 'rendering' | 'completed' | 'failed'
@@ -201,6 +227,7 @@ const startReasoningAnimation = () => {
 const handleCreateAndSubmitBrief = async () => {
   if (!form.productName.trim()) {
     currentTab.value = 0
+    toast.add({ title: 'Thiếu thông tin', description: 'Vui lòng nhập tên sản phẩm.', color: 'warning' })
     return
   }
 
@@ -222,10 +249,13 @@ const handleCreateAndSubmitBrief = async () => {
     revisionNumber.value = res.revisionNumber || 1
     activePlan.value = res.plan
     flowState.value = 'review'
+    toast.add({ title: 'Thành công', description: 'Đã sinh Storyboard thành công! Hãy kiểm tra và phê duyệt.', color: 'success' })
   } catch (err: any) {
     clearInterval(reasoningTimer)
     flowState.value = 'failed'
-    renderErrorMsg.value = err?.message || 'Có lỗi khi gửi brief sang AI Pipeline'
+    const errorMsg = getApiErrorMessage(err)
+    renderErrorMsg.value = errorMsg
+    toast.add({ title: 'Gửi Brief thất bại', description: errorMsg, color: 'error' })
   }
 }
 
@@ -245,18 +275,23 @@ const handleReviewDecision = async (decision: 'approved' | 'needs_revision' | 'r
     if (decision === 'approved') {
       renderJobId.value = res.render_job_id || `render-${Date.now()}`
       flowState.value = 'rendering'
+      toast.add({ title: 'Đã duyệt kịch bản', description: 'Bắt đầu quá trình render video...', color: 'primary' })
       startRenderPolling(renderJobId.value)
     } else if (decision === 'needs_revision') {
       if (res.plan) {
         activePlan.value = res.plan
         revisionNumber.value = res.revision_number || (revisionNumber.value + 1)
         reviewFeedback.value = ''
+        toast.add({ title: 'Đã cập nhật', description: `Đã sinh bản sửa đổi mới (Revision ${revisionNumber.value})`, color: 'info' })
       }
     } else {
       flowState.value = 'idle'
       activePlan.value = null
+      toast.add({ title: 'Đã hủy', description: 'Chiến dịch đã được hủy bỏ.', color: 'neutral' })
     }
   } catch (err: any) {
+    const errorMsg = getApiErrorMessage(err)
+    toast.add({ title: 'Đánh giá thất bại', description: errorMsg, color: 'error' })
     console.error('Review error:', err)
   } finally {
     isReviewing.value = false
@@ -272,27 +307,28 @@ const startRenderPolling = (jobId: string) => {
 
   pollingInterval = setInterval(async () => {
     try {
-      renderProgress.value = Math.min(renderProgress.value + 18, 92)
+      renderProgress.value = Math.min(renderProgress.value + 15, 92)
       const statusRes = await getRenderStatus(jobId)
 
       if (statusRes.status === 'completed' && statusRes.video_url) {
         renderProgress.value = 100
         renderVideoUrl.value = statusRes.video_url
         flowState.value = 'completed'
+        toast.add({ title: 'Render hoàn tất', description: 'Video quảng cáo đã sẵn sàng!', color: 'success' })
         clearInterval(pollingInterval)
       } else if (statusRes.status === 'failed') {
         flowState.value = 'failed'
-        renderErrorMsg.value = statusRes.error?.message || 'Render video thất bại từ AI Pod.'
+        const errorMsg = statusRes.error?.message || 'Render video thất bại từ AI Pod.'
+        renderErrorMsg.value = errorMsg
+        toast.add({ title: 'Render thất bại', description: errorMsg, color: 'error' })
         clearInterval(pollingInterval)
       }
-    } catch {
-      // Demo fallback auto-complete
-      if (renderProgress.value >= 85) {
-        renderProgress.value = 100
-        renderVideoUrl.value = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'
-        flowState.value = 'completed'
-        clearInterval(pollingInterval)
-      }
+    } catch (err: any) {
+      flowState.value = 'failed'
+      const errorMsg = getApiErrorMessage(err)
+      renderErrorMsg.value = errorMsg
+      toast.add({ title: 'Lỗi kiểm tra tiến trình', description: errorMsg, color: 'error' })
+      clearInterval(pollingInterval)
     }
   }, 2200)
 }
@@ -312,10 +348,11 @@ onBeforeUnmount(() => {
 
 // Mặc định load preset 1
 onMounted(() => {
-  if (!form.productName) {
+  if (!form.productName && presets[0]) {
     applyPreset(presets[0])
   }
 })
+
 </script>
 
 <template>

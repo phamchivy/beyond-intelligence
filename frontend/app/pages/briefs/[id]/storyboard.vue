@@ -3,6 +3,8 @@ import type { StoryboardPlan, StoryboardScene } from '../../../types/brief'
 
 const route = useRoute()
 const { reviewStoryboard } = usePipelineApi()
+const { getApiErrorMessage } = useApi()
+const toast = useToast()
 
 const taskId = computed(() => String(route.query.taskId || ''))
 const storyboardId = computed(() => String(route.params.id || route.query.storyboardId || ''))
@@ -58,23 +60,28 @@ const submitDecision = async (decision: 'approved' | 'needs_revision' | 'rejecte
     })
 
     if (decision === 'approved') {
+      toast.add({ title: 'Đã phê duyệt', description: 'Đang chuyển hướng sang trang giám sát render...', color: 'success' })
       await navigateTo(`/renders/${result.render_job_id || 'render-001'}`)
     } else if (decision === 'needs_revision') {
       if (result.plan) {
         currentPlan.value = result.plan
         revisionNumber.value = result.revision_number || (revisionNumber.value + 1)
         reviewFeedback.value = ''
+        toast.add({ title: 'Đã cập nhật', description: `Đã sinh bản sửa đổi (Revision ${revisionNumber.value})`, color: 'info' })
       }
     } else {
+      toast.add({ title: 'Đã hủy', description: 'Đã hủy kịch bản.', color: 'neutral' })
       await navigateTo('/briefs')
     }
-  } catch (err) {
-    console.error('Review decision error:', err)
+  } catch (err: any) {
+    const errText = getApiErrorMessage(err)
+    toast.add({ title: 'Lỗi đánh giá Storyboard', description: errText, color: 'error' })
   } finally {
     isSubmitting.value = false
   }
 }
 </script>
+
 
 <template>
   <div class="space-y-6">

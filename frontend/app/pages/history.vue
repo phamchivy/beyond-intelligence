@@ -65,6 +65,15 @@ const openPreview = (video: any) => {
       <USkeleton v-for="index in 3" :key="index" class="h-60 w-full rounded-2xl" />
     </div>
 
+    <div v-else-if="videos.length === 0" class="flex min-h-[300px] flex-col items-center justify-center rounded-3xl border border-dashed border-slate-300 p-8 text-center dark:border-zinc-800">
+      <UIcon name="lucide:video" class="h-10 w-10 text-slate-400 mb-2" />
+      <p class="text-sm font-semibold text-slate-700 dark:text-zinc-200">Chưa có video hoặc chiến dịch nào được tạo</p>
+      <p class="text-xs text-slate-400 mt-1">Hãy bắt đầu tạo video quảng cáo đầu tiên từ Workspace AI.</p>
+      <UButton to="/workspace" color="primary" size="sm" class="mt-4" icon="lucide:sparkles">
+        Tạo Video Đầu Tiên
+      </UButton>
+    </div>
+
     <div v-else class="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
       <UCard v-for="video in videos" :key="video.id" class="flex flex-col justify-between">
         <template #header>
@@ -107,6 +116,7 @@ const openPreview = (video: any) => {
         </template>
       </UCard>
     </div>
+
 
     <!-- Preview Modal -->
     <UModal v-model:open="previewModalOpen">

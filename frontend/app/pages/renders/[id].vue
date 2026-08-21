@@ -3,10 +3,14 @@ import type { RenderStatusResponse } from '../../types/brief'
 
 const route = useRoute()
 const { getRenderStatus } = usePipelineApi()
+const { getApiErrorMessage } = useApi()
+const toast = useToast()
 
 const renderId = computed(() => String(route.params.id || ''))
 const renderData = ref<RenderStatusResponse | null>(null)
 const showTikTokOverlay = ref(true)
+const errorMessage = ref('')
+let timer: any = null
 
 const progressValue = computed(() => {
   if (!renderData.value) return 15
@@ -25,29 +29,44 @@ const statusLabel = (status: string) => ({
 const loadRenderStatus = async () => {
   if (!renderId.value) return
   try {
-    renderData.value = await getRenderStatus(renderId.value)
-  } catch {
-    renderData.value = {
-      status: 'completed',
-      video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'
+    const res = await getRenderStatus(renderId.value)
+    renderData.value = res
+
+    if (res.status === 'completed') {
+      if (timer) clearInterval(timer)
+      toast.add({ title: 'Render hoàn tất', description: 'Video đã sẵn sàng!', color: 'success' })
+    } else if (res.status === 'failed') {
+      if (timer) clearInterval(timer)
+      errorMessage.value = res.error?.message || 'Quá trình render thất bại từ server.'
+      toast.add({ title: 'Render thất bại', description: errorMessage.value, color: 'error' })
     }
+  } catch (err: any) {
+    if (timer) clearInterval(timer)
+    const errText = getApiErrorMessage(err)
+    errorMessage.value = errText
+    renderData.value = {
+      status: 'failed',
+      error: { message: errText }
+    }
+    toast.add({ title: 'Lỗi tải trạng thái render', description: errText, color: 'error' })
   }
 }
 
 onMounted(async () => {
   await loadRenderStatus()
 
-  const timer = setInterval(() => {
+  timer = setInterval(() => {
     if (renderData.value?.status === 'processing' || renderData.value?.status === 'queued') {
       void loadRenderStatus()
     }
   }, 2500)
 
   onBeforeUnmount(() => {
-    clearInterval(timer)
+    if (timer) clearInterval(timer)
   })
 })
 </script>
+
 
 <template>
   <div class="space-y-6">
