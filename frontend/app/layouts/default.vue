@@ -2,23 +2,23 @@
 const { isDemoMode } = useApi()
 
 const navItems = [
-  { label: 'Overview', to: '/' },
-  { label: 'Workspace', to: '/workspace' },
-  { label: 'History', to: '/history' }
+  { label: 'Tổng quan', to: '/' },
+  { label: 'Brief', to: '/briefs' },
+  { label: 'Lịch sử', to: '/history' }
 ]
 </script>
 
 <template>
-  <div class="min-h-screen bg-zinc-950 text-zinc-100">
-    <header class="sticky top-0 z-40 border-b border-white/10 bg-zinc-950/80 backdrop-blur-xl">
+  <div class="min-h-screen bg-slate-50 text-slate-900">
+    <header class="sticky top-0 z-40 border-b border-slate-200 bg-white/80 backdrop-blur-xl">
       <div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3">
         <NuxtLink to="/" class="flex items-center gap-3">
           <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-sm font-bold text-white shadow-lg shadow-indigo-500/30">
             BI
           </div>
           <div>
-            <p class="text-sm font-semibold text-white">Beyond Intelligence</p>
-            <p class="text-[10px] uppercase tracking-[0.22em] text-zinc-400">AI VIDEO STUDIO</p>
+            <p class="text-sm font-semibold text-slate-900">Beyond Intelligence</p>
+            <p class="text-[10px] uppercase tracking-[0.22em] text-slate-500">AI VIDEO STUDIO</p>
           </div>
         </NuxtLink>
 
@@ -27,23 +27,23 @@ const navItems = [
             v-for="item in navItems"
             :key="item.to"
             :to="item.to"
-            class="text-sm text-zinc-300 transition hover:text-white"
-            active-class="text-indigo-300"
+            class="text-sm text-slate-600 transition hover:text-slate-900"
+            active-class="text-indigo-600"
           >
             {{ item.label }}
           </NuxtLink>
         </nav>
 
         <div class="flex items-center gap-3">
-          <div class="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-2.5 py-1.5">
-            <span class="text-[10px] font-medium uppercase tracking-[0.2em] text-zinc-400">
-              {{ isDemoMode ? 'Demo' : 'Live' }}
+          <div class="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1.5">
+            <span class="text-[10px] font-medium uppercase tracking-[0.2em] text-slate-500">
+              {{ isDemoMode ? 'Demo' : 'Trực tiếp' }}
             </span>
-            <UToggle v-model="isDemoMode" size="sm" />
+            <USwitch v-model="isDemoMode" size="sm" />
           </div>
 
-          <UButton to="/workspace" color="primary" variant="solid" class="hidden sm:inline-flex">
-            New campaign
+          <UButton to="/briefs/new" color="primary" variant="solid" class="hidden sm:inline-flex">
+            Tạo brief mới
           </UButton>
         </div>
       </div>

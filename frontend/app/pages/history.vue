@@ -1,22 +1,65 @@
 <script setup lang="ts">
 const { fetchApi } = useApi()
 
-const { data: historyResponse, pending } = await useAsyncData('video-history', () =>
-  fetchApi<{ items: Array<{ id: string; title: string; platform: string; performance: string; status: string; createdAt: string; hook: string }> }>('/history/list')
+const normalizeStatus = (status: string) => {
+  const normalized = String(status || '').toLowerCase()
+  if (['draft', 'saved', 'new'].includes(normalized)) {
+    return 'draft'
+  }
+  if (['submitted', 'queued', 'processing', 'reviewing', 'awaiting_approval', 'storyboard_review', 'storyboard_reviewed', 'reasoning'].includes(normalized)) {
+    return 'awaiting_approval'
+  }
+  if (['rendering', 'render', 'rendering_video', 'video_render'].includes(normalized)) {
+    return 'rendering'
+  }
+  if (['done', 'completed', 'success'].includes(normalized)) {
+    return 'done'
+  }
+  if (['failed', 'error'].includes(normalized)) {
+    return 'failed'
+  }
+  return normalized || 'draft'
+}
+
+const { data: historyResponse, pending } = await useLazyAsyncData('video-history', () =>
+  fetchApi<{ items: Array<Record<string, any>> }>('/briefs?page=1')
 )
 
-const videos = computed(() => historyResponse.value?.items ?? [])
+const videos = computed(() => {
+  return (historyResponse.value?.items ?? []).map((brief: Record<string, any>) => ({
+    id: brief.id,
+    title: brief.title || brief.productName || 'Campaign',
+    platform: brief.channel || 'Reels',
+    status: normalizeStatus(brief.status),
+    createdAt: brief.createdAt || new Date().toISOString(),
+    hook: brief.keyMessage || brief.productUsp || 'Campaign đang được xử lý.',
+    performance: brief.objective || 'Conversion'
+  }))
+})
+
+const statusLabel = (status: string) => {
+  const map: Record<string, string> = {
+    draft: 'Bản nháp',
+    reasoning: 'Đang suy luận',
+    awaiting_approval: 'Chờ review',
+    rendering: 'Đang render',
+    done: 'Hoàn tất',
+    failed: 'Thất bại'
+  }
+
+  return map[status] || status
+}
 </script>
 
 <template>
   <div class="space-y-6">
     <section class="flex items-end justify-between gap-4 rounded-3xl border border-white/10 bg-gradient-to-r from-zinc-900 to-indigo-950/80 p-6">
       <div>
-        <p class="text-xs uppercase tracking-[0.24em] text-indigo-300">History</p>
-        <h1 class="mt-3 text-3xl font-semibold text-white">Rendered asset library</h1>
+        <p class="text-xs uppercase tracking-[0.24em] text-indigo-300">Lịch sử</p>
+        <h1 class="mt-3 text-3xl font-semibold text-white">Thư viện asset đã render</h1>
       </div>
 
-      <UButton to="/workspace" color="primary">Create another video</UButton>
+      <UButton to="/briefs/new" color="primary">Tạo video khác</UButton>
     </section>
 
     <div v-if="pending" class="grid gap-4 md:grid-cols-3">
@@ -28,8 +71,8 @@ const videos = computed(() => historyResponse.value?.items ?? [])
         <template #header>
           <div class="flex items-center justify-between">
             <span class="text-xs uppercase tracking-[0.2em] text-zinc-400">{{ video.platform }}</span>
-            <UBadge :color="video.status === 'Success' ? 'success' : 'warning'" variant="soft">
-              {{ video.status }}
+            <UBadge :color="video.status === 'done' ? 'success' : 'warning'" variant="soft">
+              {{ statusLabel(video.status) }}
             </UBadge>
           </div>
         </template>
@@ -46,7 +89,7 @@ const videos = computed(() => historyResponse.value?.items ?? [])
           </div>
 
           <div class="flex items-center justify-between rounded-2xl border border-indigo-500/20 bg-indigo-500/10 p-3 text-sm">
-            <span class="text-zinc-300">Performance</span>
+            <span class="text-zinc-300">Mục tiêu</span>
             <span class="font-semibold text-indigo-200">{{ video.performance }}</span>
           </div>
         </div>
@@ -54,7 +97,7 @@ const videos = computed(() => historyResponse.value?.items ?? [])
         <template #footer>
           <div class="flex items-center justify-between">
             <span class="text-xs uppercase tracking-[0.2em] text-zinc-500">{{ video.id }}</span>
-            <UButton variant="ghost" color="neutral">Reuse config</UButton>
+            <UButton :to="`/briefs/${video.id}`" variant="ghost" color="neutral">Mở brief</UButton>
           </div>
         </template>
       </UCard>
