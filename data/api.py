@@ -37,10 +37,21 @@ class DataQueryRequest(BaseModel):
 
 
 class TrendingVideosRequest(BaseModel):
-    """Body for `POST /api/v1/videos/trending`."""
+    """Body for `POST /api/v1/videos/trending`.
+
+    ``q`` should be ``productInfoJson.productName`` (falling back to
+    ``productInfoJson.productCategory`` when a brief has no product name
+    yet) -- kept as ``q``, not renamed, since `agent/`'s ``HttpJsonRetriever``
+    hardcodes that GET query-param name. The three optional fields below
+    enrich the *semantic* match only (see ``_run_trending``); they never
+    touch the lexical leg.
+    """
 
     q: str
     top_k: int = Field(default=5, ge=1)
+    key_message: str | None = None
+    audience_profile: str | None = None
+    product_features: str | None = None
 
 
 class ApiError(Exception):
@@ -231,7 +242,12 @@ def _engagement_rate(metadata: dict[str, Any]) -> float | None:
     return round(engagement / views, 4)
 
 
-def _run_trending(q: str, top_k: int) -> dict[str, Any]:
+def _run_trending(
+    q: str, top_k: int, *,
+    key_message: str | None = None,
+    audience_profile: str | None = None,
+    product_features: str | None = None,
+) -> dict[str, Any]:
     """Retrieve, then reorder by relevance (rerank score, trending as tiebreak).
 
     Nothing is dropped for scoring low -- ``settings.retrieval.rerank_min_score``
@@ -243,8 +259,21 @@ def _run_trending(q: str, top_k: int) -> dict[str, Any]:
     a caller reasoning over ``relevance`` has no other way to know that.
 
     Args:
-        q: A product name or category name.
+        q: ``productInfoJson.productName`` (falling back to
+            ``productInfoJson.productCategory``) -- matched on both the
+            lexical and dense legs.
         top_k: How many videos to return, clamped to ``max_top_k``.
+        key_message: The ad's intended selling angle. Matched only against
+            the dense leg's embedding, never the lexical leg -- a video's
+            own selling angle lives in its ``summary``/``hook``, folded into
+            the same per-video embedding ``q`` is compared against.
+        audience_profile: Who the ad targets. Same dense-leg-only matching;
+            weaker signal than ``key_message`` since no indexed field is
+            defined to hold it, so it only helps when a video's own
+            hook/voiceover happens to name a similar audience.
+        product_features: Concrete product attributes/specs. Real storyboard
+            scenes narrate features this literally (e.g. "anti-leak top",
+            "3 misting modes"), so this matches well against scene text.
 
     Returns:
         ``{"meta": {...}, "items": [...]}``, each item a video with its
@@ -253,7 +282,10 @@ def _run_trending(q: str, top_k: int) -> dict[str, Any]:
         one string rather than nested fields.
     """
     top_k = min(top_k, settings.retrieval.max_top_k)
-    qvec = embed([q])[0]
+    embed_text = " | ".join(
+        part for part in [q, key_message, audience_profile, product_features] if part
+    )
+    qvec = embed([embed_text])[0]
     candidates = db.search(
         q, qvec, top_k=settings.retrieval.candidate_k, source_type="video_storyboard"
     )
@@ -297,6 +329,9 @@ def _run_trending(q: str, top_k: int) -> dict[str, Any]:
     return {
         "meta": {
             "query": q,
+            "key_message": key_message,
+            "audience_profile": audience_profile,
+            "product_features": product_features,
             "currency": settings.kalodata.currency,
             "metrics_window": "last30Day",
             "candidates_considered": len(candidates),
@@ -307,12 +342,25 @@ def _run_trending(q: str, top_k: int) -> dict[str, Any]:
 
 
 @app.get("/api/v1/videos/trending")
-def trending_get(q: str, top_k: int = 5) -> dict[str, Any]:
+def trending_get(
+    q: str, top_k: int = 5,
+    key_message: str | None = None,
+    audience_profile: str | None = None,
+    product_features: str | None = None,
+) -> dict[str, Any]:
     """GET variant: product or category name in, trending storyboards out."""
-    return _run_trending(q, top_k)
+    return _run_trending(
+        q, top_k,
+        key_message=key_message, audience_profile=audience_profile,
+        product_features=product_features,
+    )
 
 
 @app.post("/api/v1/videos/trending")
 def trending_post(body: TrendingVideosRequest) -> dict[str, Any]:
     """POST variant of the trending-videos endpoint."""
-    return _run_trending(body.q, body.top_k)
+    return _run_trending(
+        body.q, body.top_k,
+        key_message=body.key_message, audience_profile=body.audience_profile,
+        product_features=body.product_features,
+    )

@@ -62,9 +62,17 @@ kalodata_top_videos.py → kalodata_download_videos.py → kalodata_analyze_vide
 
 `_run_trending` in [api.py](api.py) (called by both the GET and POST routes):
 
-1. **Retrieve** — the query is embedded with the same model, then
-   [lib/db.py](lib/db.py)`.search(...)` runs hybrid retrieval filtered to
-   `source_type = "video_storyboard"`:
+1. **Retrieve** — `q` (`productInfoJson.productName`, falling back to `productCategory`)
+   is joined with three optional enrichment fields — `key_message`, `audience_profile`,
+   `product_features` — into one string, which is embedded with the same model. Only
+   `q` on its own goes to the lexical leg; the enrichment fields exist purely to widen
+   *what the embedding is near*, never to change what the trigram/`ts_rank` match runs
+   against. This is deliberate, not an oversight: `lib/db.py::search(q, qvec, ...)`
+   already takes the lexical text and the dense vector as independent parameters, so
+   embedding a richer string costs nothing and risks nothing — a precise product name
+   still gets an exact lexical match even when the embedding is chasing a fuzzier
+   selling angle. Then [lib/db.py](lib/db.py)`.search(...)` runs hybrid retrieval
+   filtered to `source_type = "video_storyboard"`:
    - **dense leg**: cosine distance over `index.embedding`, top `leg_k` (50)
    - **lexical leg**: `pg_trgm` similarity + `ts_rank` full-text, top `leg_k` (50),
      candidates below `trigram_threshold` (0.2) dropped
@@ -104,12 +112,33 @@ kalodata_top_videos.py → kalodata_download_videos.py → kalodata_analyze_vide
    and the full nested `storyboard` (hook/hook_style/cta/summary/scenes) — everything
    a caller (an LLM prompt, or `agent/`'s `HttpJsonRetriever`) needs to both rank and
    actually reason about what the video does, without a second round trip. A sibling
-   `meta` object (`query`, `currency`, `metrics_window`, `candidates_considered`,
-   `relevance_gated: false`) states plainly what the numbers mean and that nothing was
-   dropped on relevance — see [api-reference.md](api-reference.md) for the full field
-   table.
+   `meta` object (`query`, `key_message`, `audience_profile`, `product_features`,
+   `currency`, `metrics_window`, `candidates_considered`, `relevance_gated: false`)
+   states plainly what the numbers mean, what enrichment (if any) shaped the embedding,
+   and that nothing was dropped on relevance — see [api-reference.md](api-reference.md)
+   for the full field table.
 
 ## Why this shape
+
+- **`key_message`/`audience_profile`/`product_features` enrich the embedding only, never
+  the lexical leg** — a future storyboard-generation brief supplies these alongside a
+  product name (see [api-reference.md](api-reference.md)'s request-field table). None of
+  them has its own indexed field to match against directly:
+  - `key_message` (the ad's selling angle) is closest to what a video's own `summary`
+    already is — Gemini's schema defines `summary` as "one-sentence summary of the
+    selling angle" ([lib/gemini.py](lib/gemini.py)) — and `summary` sits right at the
+    front of the per-video embedding, alongside `hook`.
+  - `product_features` matches well against literal scene narration: real storyboards
+    describe concrete attributes scene-by-scene ("anti-leak top", "LED digital display,"
+    "3 misting modes").
+  - `audience_profile` is the weakest of the three — no field is defined to hold "who
+    this targets" (Kalodata itself has no viewer/buyer demographic data at all, only the
+    *creator's* follower count), so it only helps when a hook/voiceover happens to name a
+    similar audience.
+
+  Since `lib/db.py::search(q, qvec, ...)` already takes the lexical text and dense
+  vector as independent parameters, none of this touches `db.search` or its SQL — only
+  what gets embedded changes.
 
 - **Revenue-decay over date-cutoff** — see step 3; a thin trending bucket must still
   answer, not 404.

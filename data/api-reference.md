@@ -72,10 +72,17 @@ document chunks here.
 
 **Query params (GET)** / **Body (POST)**
 
-| field   | type | default | notes                     |
-|---------|------|---------|----------------------------|
-| `q`     | str  | required | a product or category name |
-| `top_k` | int  | `5`     | clamped to `max_top_k` (50) |
+| field               | type | default  | notes                     |
+|---------------------|------|----------|----------------------------|
+| `q`                 | str  | required | `productInfoJson.productName`, falling back to `productInfoJson.productCategory` — matched on **both** legs (lexical + dense) |
+| `top_k`             | int  | `5`      | clamped to `max_top_k` (50) |
+| `key_message`       | str  | `null`   | optional; the ad's selling angle — matched only on the **dense leg**, against what a video's own `summary`/`hook` encode |
+| `audience_profile`  | str  | `null`   | optional; who the ad targets — dense-leg only, weaker signal (no indexed field holds this; it only helps when a video's hook/voiceover happens to name a similar audience) |
+| `product_features`  | str  | `null`   | optional; concrete product attributes/specs — dense-leg only, matches well against literal scene narration ("anti-leak top", "3 misting modes") |
+
+`key_message`/`audience_profile`/`product_features` are appended to `q` (space-`\|`-joined) before
+embedding, then discarded — the lexical leg's trigram/`ts_rank` match always runs against the bare
+`q` alone, never the enriched string, so a precise product/category term never gets diluted.
 
 **Response**
 
@@ -83,6 +90,9 @@ document chunks here.
 {
   "meta": {
     "query": "electric shaver",
+    "key_message": null,
+    "audience_profile": null,
+    "product_features": null,
     "currency": "USD",
     "metrics_window": "last30Day",
     "candidates_considered": 50,

@@ -218,3 +218,64 @@ def test_is_ad_and_engagement_rate_surface_from_metadata(wire):
 
     assert item["is_ad"] is True
     assert item["engagement_rate"] == 0.1  # (50+30+20)/1000
+
+
+def test_enrichment_fields_widen_the_embedding_but_never_reach_lexical_search(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """key_message/audience_profile/product_features must only affect the dense-leg
+    embedding text -- db.search's q stays the bare product/category term, since that's
+    what the lexical (trigram/ts_rank) leg matches against."""
+    embed_calls: list[list[str]] = []
+    monkeypatch.setattr(api, "embed", lambda texts: embed_calls.append(texts) or [[0.1, 0.2, 0.3]])
+    search_q: list[str] = []
+
+    def _fake_search(q, qvec, **kw):
+        search_q.append(q)
+        return [_chunk("v1", revenue=100.0)]
+
+    monkeypatch.setattr(api.db, "apply_init_sql", lambda: None)
+    monkeypatch.setattr(api.db, "search", _fake_search)
+    monkeypatch.setattr(api, "rerank", lambda q, docs: [1.0])
+
+    TestClient(api.app).post("/api/v1/videos/trending", json={
+        "q": "portable nebulizer",
+        "key_message": "quiet enough for a sleeping baby",
+        "audience_profile": "new parents",
+        "product_features": "rechargeable, anti-leak cup",
+    })
+
+    embedded_text = embed_calls[0][0]
+    assert "portable nebulizer" in embedded_text
+    assert "quiet enough for a sleeping baby" in embedded_text
+    assert "new parents" in embedded_text
+    assert "rechargeable, anti-leak cup" in embedded_text
+    assert search_q == ["portable nebulizer"]  # never the enriched string
+
+
+def test_embed_text_is_just_q_when_enrichment_fields_omitted(
+    wire, monkeypatch: pytest.MonkeyPatch,
+):
+    embed_calls: list[list[str]] = []
+    monkeypatch.setattr(api, "embed", lambda texts: embed_calls.append(texts) or [[0.1, 0.2, 0.3]])
+    client = wire([_chunk("v1", revenue=100.0)], [1.0])
+    client.get("/api/v1/videos/trending", params={"q": "nebulizer"})
+
+    assert embed_calls[0] == ["nebulizer"]
+
+
+def test_meta_echoes_enrichment_fields_including_null_when_omitted(wire):
+    client = wire([_chunk("v1", revenue=100.0)], [1.0])
+
+    with_fields = client.get("/api/v1/videos/trending", params={
+        "q": "nebulizer", "key_message": "km", "audience_profile": "ap",
+        "product_features": "pf",
+    }).json()["meta"]
+    assert with_fields["key_message"] == "km"
+    assert with_fields["audience_profile"] == "ap"
+    assert with_fields["product_features"] == "pf"
+
+    without_fields = client.get("/api/v1/videos/trending", params={"q": "nebulizer"}).json()["meta"]
+    assert without_fields["key_message"] is None
+    assert without_fields["audience_profile"] is None
+    assert without_fields["product_features"] is None
