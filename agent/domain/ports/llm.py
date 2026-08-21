@@ -38,11 +38,33 @@ class MessageRole(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class ImagePart:
+    """
+    Mot phan noi dung dang anh dinh kem trong LLMMessage -- can cho cac
+    tac vu multimodal (vd: QAChecker dung Gemini Vision de so sanh frame
+    video output voi anh asset san pham goc, theo rang buoc de bai
+    "khong duoc bia hinh san pham").
+    """
+
+    image_bytes: bytes
+    mime_type: str = "image/png"
+
+
+@dataclass(frozen=True, slots=True)
 class LLMMessage:
-    """Mot message trong hoi thoai gui den LLM."""
+    """
+    Mot message trong hoi thoai gui den LLM.
+
+    `images` la truong TUY CHON, mac dinh rong -- moi message van hoat
+    dong dung nhu truoc (chi text) neu khong truyen gi vao day. Khi can
+    gui kem anh (multimodal), truyen tuple ImagePart vao truong nay;
+    adapter (GeminiProvider) chiu trach nhiem dich sang dinh dang anh
+    rieng cua Gemini, domain khong biet chi tiet do.
+    """
 
     role: MessageRole
     content: str
+    images: tuple[ImagePart, ...] = field(default_factory=tuple)
     name: str | None = None  # ten tool, chi dung khi role == TOOL
 
 

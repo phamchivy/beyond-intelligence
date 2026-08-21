@@ -144,6 +144,58 @@ class LLMSettings(_BaseAppSettings):
         return key
 
 
+class VideoRendererSettings(_BaseAppSettings):
+    """
+    Cau hinh cho video renderer (Seedance qua BytePlus ModelArk) -- doc
+    boi infrastructure/video/seedance_renderer.py (khi viet).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="VIDEO_")
+
+    provider: str = "seedance"
+    # Khong dat default cho model/base_url vi chua xac nhan gia tri
+    # chinh xac tren BytePlus ModelArk -- nhung cung KHONG bat buoc
+    # cung (khong dung `str` khong default) vi settings duoc khoi tao
+    # EAGER (settings = Settings() chay ngay luc import file nay) --
+    # bat buoc cung se lam VO moi module khac import settings, ke ca
+    # khong lien quan gi den video. Dung lai dung pattern voi api_key:
+    # Optional + ham require_config() bao loi luc THAT SU dung, khong
+    # phai luc khoi dong toan bo settings.
+    model: str | None = Field(default=None)
+    base_url: str | None = Field(default=None)
+    api_key: SecretStr | None = Field(default=None)
+    timeout_seconds: float = Field(default=120.0, gt=0)  # sinh video lau hon LLM, timeout dai hon
+
+    def require_config(self) -> tuple[str, str, SecretStr]:
+        """
+        Goi ham nay o infrastructure/video/seedance_renderer.py TRUOC
+        khi dung -- bao loi ro rang neu thieu bat ky truong bat buoc
+        nao, thay vi de loi mo ho luc goi API that.
+        """
+        missing = [
+            env_name
+            for env_name, value in [
+                ("VIDEO_MODEL", self.model),
+                ("VIDEO_BASE_URL", self.base_url),
+            ]
+            if value is None
+        ]
+        if missing:
+            raise ValueError(
+                f"Thieu cau hinh video renderer: {', '.join(missing)}. "
+                f"Hay khai bao trong file .env."
+            )
+        return self.model, self.base_url, self.require_api_key()
+
+    def require_api_key(self) -> SecretStr:
+        if self.api_key is None:
+            raise ValueError(
+                "Thieu API key cho video renderer. Hay set bien moi truong "
+                "VIDEO_API_KEY trong file .env."
+            )
+        return self.api_key
+
+
 class DecisionPolicySettings(_BaseAppSettings):
     """Cau hinh nguong cho DecisionPolicy (domain/policies/decision_policy.py)."""
 
@@ -210,6 +262,7 @@ class Settings(_BaseAppSettings):
     environment: Environment = Environment.DEVELOPMENT
 
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    video: VideoRendererSettings = Field(default_factory=VideoRendererSettings)
     decision_policy: DecisionPolicySettings = Field(default_factory=DecisionPolicySettings)
     retry_policy: RetryPolicySettings = Field(default_factory=RetryPolicySettings)
     tool_policy: ToolPolicySettings = Field(default_factory=ToolPolicySettings)
