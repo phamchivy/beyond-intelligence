@@ -5,27 +5,34 @@ export default defineEventHandler((event) => {
   const render = mockRenderById[id]
 
   if (!render) {
-    throw createError({ statusCode: 404, statusMessage: 'Render status not found' })
+    // Tạo fallback mock job nếu ID ngẫu nhiên được gọi
+    return {
+      status: 'completed',
+      video_url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'
+    }
   }
 
-  if (render.status === 'processing' && !render.video_url) {
+  if (render.status === 'processing') {
     return {
       status: 'processing',
-      video_url: ''
+      video_url: render.video_url || ''
     }
   }
 
   if (render.status === 'completed') {
     return {
       status: 'completed',
-      video_url: render.video_url || 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4'
+      video_url: render.video_url || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'
     }
   }
 
   if (render.status === 'failed') {
     return {
       status: 'failed',
-      video_url: ''
+      error: {
+        code: 'RENDER_FAILED',
+        message: 'Lỗi tổng hợp video từ Agent Pod.'
+      }
     }
   }
 
@@ -34,3 +41,4 @@ export default defineEventHandler((event) => {
     video_url: render.video_url || ''
   }
 })
+

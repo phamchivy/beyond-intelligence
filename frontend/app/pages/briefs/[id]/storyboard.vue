@@ -1,190 +1,231 @@
 <script setup lang="ts">
+import type { StoryboardPlan, StoryboardScene } from '../../../types/brief'
+
 const route = useRoute()
 const { reviewStoryboard } = usePipelineApi()
 
 const taskId = computed(() => String(route.query.taskId || ''))
 const storyboardId = computed(() => String(route.params.id || route.query.storyboardId || ''))
-const rawStoryboardText = computed(() => String(route.query.storyboardText || ''))
 const reviewFeedback = ref('')
+const isSubmitting = ref(false)
+const revisionNumber = ref(1)
 
-const parseStoryboardText = (text: string) => {
-  const sections = text
-    .split(/\n\s*\n/)
-    .map(item => item.trim())
-    .filter(Boolean)
-
-  if (!sections.length) {
-    return {
-      id: storyboardId.value || 'storyboard-preview',
-      briefId: storyboardId.value || 'brief-preview',
-      hook: 'AI đang tạo hook cho chiến dịch này.',
-      shots: [
-        { id: 'shot-1', role: 'hook', asset: 'https://images.unsplash.com/photo-1496181133206-80ce9b88a853', overlayText: 'AI đang tạo hook cho chiến dịch này.', duration: 4 },
-        { id: 'shot-2', role: 'product', asset: 'https://images.unsplash.com/photo-1517336714731-489689fd1ca8', overlayText: 'Sản phẩm đang được ánh xạ thành cảnh quảng cáo.', duration: 5 },
-        { id: 'shot-3', role: 'benefit', asset: 'https://images.unsplash.com/photo-1522202176988-66273c2fd55f', overlayText: 'Lợi ích và điểm nổi bật sẽ xuất hiện ở đây.', duration: 6 },
-        { id: 'shot-4', role: 'cta', asset: 'https://images.unsplash.com/photo-1545239351-1141bd82e8a6', overlayText: 'CTA: Mua ngay hôm nay', duration: 4 }
-      ],
-      complianceWarnings: [],
-      status: 'awaiting_review',
-      generatedAt: new Date().toISOString()
+const defaultPlan: StoryboardPlan = {
+  scenes: [
+    {
+      scene_number: 1,
+      duration_ms: 3000,
+      visual_description: 'Cận cảnh mở đầu ấn tượng với vấn đề nổi cộm. Chuyển cảnh nhanh với hiệu ứng zoom thu hút 3s đầu.',
+      audio_script: 'Bạn có đang tìm kiếm giải pháp đột phá cho cuộc sống?',
+      suggested_asset: 'hero'
+    },
+    {
+      scene_number: 2,
+      duration_ms: 4500,
+      visual_description: 'Trải nghiệm thực tế sản phẩm. Xuất hiện icon nổi bật tính năng USP cốt lõi.',
+      audio_script: 'Khám phá ngay giải pháp tối ưu với hiệu năng vượt trội.',
+      suggested_asset: 'closeup'
+    },
+    {
+      scene_number: 3,
+      duration_ms: 4500,
+      visual_description: 'Lifestyle shot: Người dùng tươi cười, hài lòng khi trải nghiệm sự khác biệt.',
+      audio_script: 'Hiệu quả rõ rệt, tiết kiệm thời gian và tối ưu chi phí cho bạn.',
+      suggested_asset: 'lifestyle'
+    },
+    {
+      scene_number: 4,
+      duration_ms: 3000,
+      visual_description: 'Màn hình kết thúc với Logo thương hiệu, thông tin ưu đãi và nút CTA nổi bật.',
+      audio_script: 'Bấm vào link bên dưới để nhận ưu đãi đặc quyền ngay hôm nay!',
+      suggested_asset: 'logo'
     }
-  }
-
-  const parsedShots = sections.map((section, index) => {
-    const clean = section.replace(/^[-•]\s*/, '').trim()
-    const match = clean.match(/^([A-Za-zÀ-ỹ0-9\s]+):\s*(.*)$/)
-    const label = match?.[1]?.trim() ?? `Scene ${index + 1}`
-    const content = match?.[2]?.trim() ?? clean
-
-    const role = label.toLowerCase().includes('hook')
-      ? 'hook'
-      : label.toLowerCase().includes('cta')
-        ? 'cta'
-        : 'scene'
-
-    return {
-      id: `shot-${index + 1}`,
-      role,
-      asset: [
-        'https://images.unsplash.com/photo-1496181133206-80ce9b88a853',
-        'https://images.unsplash.com/photo-1517336714731-489689fd1ca8',
-        'https://images.unsplash.com/photo-1522202176988-66273c2fd55f',
-        'https://images.unsplash.com/photo-1545239351-1141bd82e8a6'
-      ][index % 4],
-      overlayText: content || label,
-      duration: 4 + (index % 3)
-    }
-  })
-
-  return {
-    id: storyboardId.value || `storyboard-${Date.now()}`,
-    briefId: storyboardId.value || 'brief-preview',
-    hook: parsedShots.find(shot => shot.role === 'hook')?.overlayText || parsedShots[0]?.overlayText || 'AI storyboard đã sẵn sàng.',
-    shots: parsedShots,
-    complianceWarnings: [],
-    status: 'awaiting_review',
-    generatedAt: new Date().toISOString()
-  }
+  ],
+  soundtrack: 'Upbeat Tech Trending Beats (128 BPM)',
+  voiceover_tone: 'Năng động, tự tin, truyền cảm hứng'
 }
 
-const storyboard = ref<Record<string, any> | null>(rawStoryboardText.value ? parseStoryboardText(rawStoryboardText.value) : null)
+const currentPlan = ref<StoryboardPlan>(defaultPlan)
 
-watch(rawStoryboardText, (nextText) => {
-  storyboard.value = nextText ? parseStoryboardText(nextText) : null
-}, { immediate: true })
+const submitDecision = async (decision: 'approved' | 'needs_revision' | 'rejected') => {
+  isSubmitting.value = true
+  try {
+    const result = await reviewStoryboard({
+      taskId: taskId.value || `task-${Date.now()}`,
+      storyboardId: storyboardId.value || `story-${Date.now()}`,
+      decision,
+      feedback: reviewFeedback.value || undefined
+    })
 
-const draftHook = computed({
-  get: () => storyboard.value?.hook || '',
-  set: (value: string) => {
-    if (storyboard.value) {
-      storyboard.value.hook = value
+    if (decision === 'approved') {
+      await navigateTo(`/renders/${result.render_job_id || 'render-001'}`)
+    } else if (decision === 'needs_revision') {
+      if (result.plan) {
+        currentPlan.value = result.plan
+        revisionNumber.value = result.revision_number || (revisionNumber.value + 1)
+        reviewFeedback.value = ''
+      }
+    } else {
+      await navigateTo('/briefs')
     }
+  } catch (err) {
+    console.error('Review decision error:', err)
+  } finally {
+    isSubmitting.value = false
   }
-})
-
-const submitDecision = async (decision: 'approved' | 'revised' | 'rejected') => {
-  if (!taskId.value || !storyboardId.value) {
-    return
-  }
-
-  const result = await reviewStoryboard({
-    taskId: taskId.value,
-    storyboardId: storyboardId.value,
-    decision,
-    feedback: reviewFeedback.value || undefined
-  })
-
-  await navigateTo(`/renders/${result.render_job_id}`)
 }
-
-const approveStoryboard = () => submitDecision('approved')
-const requestRevision = () => submitDecision('revised')
-const rejectStoryboard = () => submitDecision('rejected')
 </script>
 
 <template>
   <div class="space-y-6">
-    <div v-if="!storyboard" class="rounded-3xl border border-white/10 bg-zinc-900/80 p-12 text-center text-zinc-300">
-      Đang tải storyboard...
-    </div>
-
-    <div v-else class="space-y-6">
-      <section class="flex flex-col gap-4 rounded-3xl border border-white/10 bg-zinc-900/80 p-5 md:flex-row md:items-center md:justify-between">
-        <div>
-          <p class="text-sm uppercase tracking-[0.22em] text-indigo-300">Đánh giá storyboard</p>
-          <h1 class="mt-2 text-3xl font-semibold text-white">Review AI storyboard</h1>
-          <p class="mt-2 text-sm text-zinc-400">Task ID: {{ taskId || 'N/A' }} • Storyboard ID: {{ storyboardId }}</p>
+    <!-- Header -->
+    <section class="flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-xs dark:border-zinc-800 dark:bg-zinc-900 md:flex-row md:items-center md:justify-between">
+      <div>
+        <div class="flex items-center gap-2">
+          <UBadge color="primary" variant="solid">
+            Revision {{ revisionNumber }} / 3
+          </UBadge>
+          <UBadge color="success" variant="subtle">
+            Độ tin cậy AI: 92%
+          </UBadge>
         </div>
+        <h1 class="mt-1.5 text-2xl font-bold text-slate-900 dark:text-white">
+          Đánh Giá Storyboard (HITL Review)
+        </h1>
+        <p class="text-xs text-slate-500">
+          Task ID: {{ taskId || 'task-demo' }} • Storyboard ID: {{ storyboardId }}
+        </p>
+      </div>
 
-        <div class="flex flex-wrap items-center gap-2">
-          <UButton variant="outline" @click="requestRevision">Yêu cầu chỉnh sửa</UButton>
-          <UButton variant="soft" color="neutral" @click="rejectStoryboard">Từ chối</UButton>
-          <UButton color="primary" @click="approveStoryboard">Phê duyệt & render</UButton>
-        </div>
-      </section>
+      <div class="flex flex-wrap items-center gap-2">
+        <UButton
+          variant="outline"
+          color="neutral"
+          :disabled="isSubmitting"
+          @click="submitDecision('rejected')"
+        >
+          Hủy bỏ
+        </UButton>
+        <UButton
+          variant="outline"
+          color="secondary"
+          :loading="isSubmitting"
+          icon="lucide:refresh-cw"
+          :disabled="!reviewFeedback.trim()"
+          @click="submitDecision('needs_revision')"
+        >
+          Yêu cầu sửa
+        </UButton>
+        <UButton
+          color="primary"
+          :loading="isSubmitting"
+          icon="lucide:check-circle"
+          @click="submitDecision('approved')"
+        >
+          Phê duyệt & Render
+        </UButton>
+      </div>
+    </section>
 
-      <div class="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
-        <div class="space-y-6">
-          <UCard class="border border-white/10 bg-white/5">
-            <template #header>
-              <h2 class="text-lg font-semibold text-white">Nội dung hook</h2>
-            </template>
+    <!-- Grid -->
+    <div class="grid gap-6 xl:grid-cols-12">
+      <!-- Left: Scene List (8 / 12) -->
+      <div class="space-y-4 xl:col-span-8">
+        <UCard>
+          <template #header>
+            <div class="flex items-center justify-between">
+              <h2 class="text-sm font-bold uppercase tracking-wider text-slate-800 dark:text-zinc-200">
+                Danh Sách Phân Cảnh (Scenes)
+              </h2>
+              <span class="text-xs text-slate-500">{{ currentPlan.scenes.length }} cảnh quay 9:16</span>
+            </div>
+          </template>
 
-            <UTextarea v-model="draftHook" :rows="3" />
-          </UCard>
+          <div class="space-y-3">
+            <div
+              v-for="(scene, idx) in currentPlan.scenes"
+              :key="idx"
+              class="rounded-xl border border-slate-200 bg-slate-50/50 p-4 transition dark:border-zinc-800 dark:bg-zinc-900/50"
+            >
+              <div class="flex items-center justify-between border-b border-slate-200 pb-2 dark:border-zinc-800">
+                <div class="flex items-center gap-2">
+                  <span class="flex h-6 w-6 items-center justify-center rounded-md bg-indigo-600 text-xs font-bold text-white">
+                    #{{ scene.scene_number || (idx + 1) }}
+                  </span>
+                  <span class="text-xs font-bold text-slate-800 dark:text-zinc-200">
+                    Cảnh {{ scene.scene_number || (idx + 1) }} ({{ (scene.duration_ms / 1000).toFixed(1) }}s)
+                  </span>
+                </div>
+                <UBadge size="xs" color="secondary" variant="subtle">
+                  Role: {{ scene.suggested_asset || 'hero' }}
+                </UBadge>
+              </div>
 
-          <UCard class="border border-white/10 bg-white/5">
-            <template #header>
-              <h2 class="text-lg font-semibold text-white">Danh sách cảnh</h2>
-            </template>
-
-            <div class="space-y-4">
-              <div v-for="shot in storyboard.shots" :key="shot.id" class="overflow-hidden rounded-2xl border border-white/10 bg-zinc-900/70">
-                <div class="flex flex-col gap-4 md:flex-row">
-                  <img :src="shot.asset" :alt="shot.role" class="h-36 w-full object-cover md:w-44" />
-                  <div class="flex-1 p-4">
-                    <div class="flex items-center justify-between gap-2">
-                      <UBadge color="primary" variant="soft">{{ shot.role }}</UBadge>
-                      <span class="text-xs text-zinc-400">{{ shot.duration }}s</span>
-                    </div>
-                    <p class="mt-3 text-base font-medium text-white">{{ shot.overlayText }}</p>
-                  </div>
+              <div class="mt-3 grid gap-3 md:grid-cols-2">
+                <div>
+                  <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Mô tả hình ảnh</p>
+                  <p class="mt-1 text-xs text-slate-800 dark:text-zinc-200">{{ scene.visual_description }}</p>
+                </div>
+                <div>
+                  <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Lời thoại / Voiceover</p>
+                  <p class="mt-1 text-xs font-medium text-indigo-600 dark:text-indigo-400">"{{ scene.audio_script }}"</p>
                 </div>
               </div>
             </div>
-          </UCard>
-        </div>
+          </div>
+        </UCard>
+      </div>
 
-        <div class="space-y-6">
-          <UCard class="border border-white/10 bg-white/5">
-            <template #header>
-              <h2 class="text-lg font-semibold text-white">Phản hồi cho AI</h2>
-            </template>
+      <!-- Right: Settings & Feedback (4 / 12) -->
+      <div class="space-y-4 xl:col-span-4">
+        <UCard>
+          <template #header>
+            <h2 class="text-sm font-bold uppercase tracking-wider text-slate-800 dark:text-zinc-200">
+              Âm Nhạc & Giọng Đọc
+            </h2>
+          </template>
 
-            <UTextarea v-model="reviewFeedback" :rows="6" placeholder="Ví dụ: Tăng độ rõ CTA, bỏ cảnh đầu dài, thêm mô tả về lợi ích chính..." />
-          </UCard>
-
-          <UCard class="border border-white/10 bg-white/5">
-            <template #header>
-              <h2 class="text-lg font-semibold text-white">Kiểm tra tuân thủ</h2>
-            </template>
-
-            <div v-if="storyboard.complianceWarnings?.length" class="space-y-3">
-              <UAlert
-                v-for="warning in storyboard.complianceWarnings"
-                :key="warning.id"
-                :title="warning.title"
-                :description="warning.message"
-                color="warning"
-                variant="subtle"
-              />
+          <div class="space-y-3 text-xs">
+            <div>
+              <span class="text-slate-500">Soundtrack:</span>
+              <p class="font-semibold text-slate-800 dark:text-zinc-200">{{ currentPlan.soundtrack }}</p>
             </div>
-            <div v-else class="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-300">
-              Không phát hiện khẳng định bị chặn.
+            <div>
+              <span class="text-slate-500">Voiceover Tone:</span>
+              <p class="font-semibold text-slate-800 dark:text-zinc-200">{{ currentPlan.voiceover_tone }}</p>
             </div>
-          </UCard>
-        </div>
+          </div>
+        </UCard>
+
+        <UCard>
+          <template #header>
+            <h2 class="text-sm font-bold uppercase tracking-wider text-slate-800 dark:text-zinc-200">
+              Phản Hồi Chỉnh Sửa
+            </h2>
+          </template>
+
+          <div class="space-y-3">
+            <UTextarea
+              v-model="reviewFeedback"
+              :rows="4"
+              placeholder="Nhập yêu cầu sửa kịch bản nếu cần AI tạo lại revision mới..."
+              class="text-xs"
+            />
+            <UButton
+              block
+              size="sm"
+              variant="outline"
+              color="secondary"
+              icon="lucide:refresh-cw"
+              :disabled="!reviewFeedback.trim()"
+              @click="submitDecision('needs_revision')"
+            >
+              Gửi Yêu Cầu Sửa
+            </UButton>
+          </div>
+        </UCard>
       </div>
     </div>
   </div>
 </template>
+
