@@ -40,14 +40,18 @@ builder.Services.AddCors(options =>
 // 4. Cấu hình HttpClients kết nối sang Agent Pod (Port 8001) & Data Pod (Port 8002)
 builder.Services.AddHttpClient("AgentPod", client =>
 {
-    var url = builder.Configuration["Services:AgentPodUrl"] ?? "http://ai:8001";
+    var url = builder.Configuration["Services:AgentPodUrl"]
+        ?? builder.Configuration["AI_SERVICE_URL"]
+        ?? "http://ai:8001";
     client.BaseAddress = new Uri(url);
     client.Timeout = TimeSpan.FromSeconds(60);
 });
 
 builder.Services.AddHttpClient("DataPod", client =>
 {
-    var url = builder.Configuration["Services:DataPodUrl"] ?? "http://data:8002";
+    var url = builder.Configuration["Services:DataPodUrl"]
+        ?? builder.Configuration["DATA_SERVICE_URL"]
+        ?? "http://data:8002";
     client.BaseAddress = new Uri(url);
     client.Timeout = TimeSpan.FromSeconds(60);
 });

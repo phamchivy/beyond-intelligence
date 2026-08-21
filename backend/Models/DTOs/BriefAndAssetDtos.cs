@@ -11,7 +11,7 @@ public class CreateBriefJsonRequest
   public string? ProductOffer { get; set; }
   public List<string>? AllowedClaims { get; set; }
 
-  public object AudienceProfile { get; set; } = default!; // {who, pain_points, needs, buy_reasons}
+  public object AudienceProfile { get; set; } = new { }; // {who, pain_points, needs, buy_reasons}
 
   public string Objective { get; set; } = default!;      // conversion | lead | traffic | awareness
   public string KeyMessage { get; set; } = default!;

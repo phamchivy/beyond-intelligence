@@ -29,12 +29,6 @@ public class GetRenderStatusEndpoint : EndpointWithoutRequest
     public override async Task HandleAsync(CancellationToken ct)
     {
         var renderIdStr = Route<string>("id");
-        if (!Guid.TryParse(renderIdStr, out var renderJobId))
-        {
-            HttpContext.Response.StatusCode = StatusCodes.Status400BadRequest;
-            await HttpContext.Response.WriteAsJsonAsync(new { message = "ID render không đúng định dạng UUID." }, cancellationToken: ct);
-            return;
-        }
 
         await using var conn = new NpgsqlConnection(_config.GetConnectionString("DefaultConnection"));
         await conn.OpenAsync(ct);
@@ -47,9 +41,9 @@ public class GetRenderStatusEndpoint : EndpointWithoutRequest
                 status, 
                 temp_video_url
             FROM render_jobs 
-            WHERE id = @Id;";
+            WHERE agent_job_id = @Raw OR id::text = @Raw;";
 
-        var job = await conn.QuerySingleOrDefaultAsync<RenderJobRecord>(selectJobSql, new { Id = renderJobId });
+        var job = await conn.QuerySingleOrDefaultAsync<RenderJobRecord>(selectJobSql, new { Raw = renderIdStr });
 
         if (job == null)
         {
@@ -92,7 +86,7 @@ public class GetRenderStatusEndpoint : EndpointWithoutRequest
                     updated_at = now() 
                 WHERE id = @TaskId;", new
             {
-                Id = renderJobId,
+                Id = job.id,
                 TaskId = job.task_id,
                 FinalUrl = savedData.FinalUrl,
                 ObjectRef = savedData.ObjectRef
@@ -121,7 +115,7 @@ public class GetRenderStatusEndpoint : EndpointWithoutRequest
                     updated_at = now() 
                 WHERE id = @TaskId;", new 
             { 
-                Id = renderJobId, 
+                Id = job.id, 
                 TaskId = job.task_id,
                 ErrorMsg = agentStatus.Error != null ? JsonSerializer.Serialize(agentStatus.Error) : null
             });

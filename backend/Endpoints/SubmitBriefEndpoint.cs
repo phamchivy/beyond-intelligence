@@ -34,6 +34,19 @@ public class SubmitBriefEndpoint : Endpoint<SubmitBriefFormRequest>
         var briefId = Guid.NewGuid();
         var storyboardId = Guid.NewGuid();
 
+        if (string.IsNullOrWhiteSpace(req.ProductInfoJson)
+            || string.IsNullOrWhiteSpace(req.TargetAudienceJson)
+            || string.IsNullOrWhiteSpace(req.ConstraintsJson)
+            || string.IsNullOrWhiteSpace(req.KeyMessage))
+        {
+            HttpContext.Response.StatusCode = StatusCodes.Status400BadRequest;
+            await HttpContext.Response.WriteAsJsonAsync(new
+            {
+                message = "Missing required form fields: product_info, target_audience, key_message, constraints."
+            }, cancellationToken: ct);
+            return;
+        }
+
         await using var conn = new NpgsqlConnection(_config.GetConnectionString("DefaultConnection"));
         await conn.OpenAsync(ct);
 
@@ -121,7 +134,7 @@ public class SubmitBriefEndpoint : Endpoint<SubmitBriefFormRequest>
             Id = storyboardId,
             TaskId = taskId,
             agentRes.RevisionNumber,
-            Plan = JsonSerializer.Serialize(agentRes.Plan)
+            Plan = JsonSerializer.Serialize(agentRes.ResolvedPlan)
         });
 
         // 7. Cập nhật task -> storyboard_review[cite: 8]
@@ -132,7 +145,7 @@ public class SubmitBriefEndpoint : Endpoint<SubmitBriefFormRequest>
             TaskId = taskId,
             StoryboardId = storyboardId,
             RevisionNumber = agentRes.RevisionNumber,
-            Plan = agentRes.Plan,
+            Plan = agentRes.ResolvedPlan,
             TaskStatus = "storyboard_review"
         };
 

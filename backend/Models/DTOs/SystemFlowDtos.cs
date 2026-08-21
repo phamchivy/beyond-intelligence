@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
+using FastEndpoints;
 using Microsoft.AspNetCore.Http;
 
 namespace AIHackathonApi.Models.DTOs;
@@ -11,30 +12,61 @@ namespace AIHackathonApi.Models.DTOs;
 
 public class SubmitBriefFormRequest
 {
+    [BindFrom("product_info")]
     public string ProductInfoJson { get; set; } = default!;
+
+    [BindFrom("target_audience")]
     public string TargetAudienceJson { get; set; } = default!;
+
+    [BindFrom("ad_objective")]
     public string AdObjective { get; set; } = "conversion";
+
+    [BindFrom("key_message")]
     public string KeyMessage { get; set; } = default!;
+
+    [BindFrom("channel")]
     public string Channel { get; set; } = "tiktok";
+
+    [BindFrom("creative_reference")]
     public string? CreativeReferenceJson { get; set; }
+
+    [BindFrom("constraints")]
     public string ConstraintsJson { get; set; } = default!;
+
+    [BindFrom("assets")]
     public List<IFormFile> Assets { get; set; } = new();
 }
 
 public class SubmitBriefResponse
 {
+    [JsonPropertyName("task_id")]
     public Guid TaskId { get; set; }
+
+    [JsonPropertyName("storyboard_id")]
     public Guid StoryboardId { get; set; }
+
+    [JsonPropertyName("revision_number")]
     public int RevisionNumber { get; set; }
+
+    [JsonPropertyName("plan")]
     public object Plan { get; set; } = default!;
+
+    [JsonPropertyName("task_status")]
     public string TaskStatus { get; set; } = "storyboard_review";
 }
 
 public class StoryboardReviewRequest
 {
+    [JsonPropertyName("task_id")]
     public Guid TaskId { get; set; }
+
+    [JsonPropertyName("storyboard_id")]
     public Guid StoryboardId { get; set; }
-    public string Decision { get; set; } = "approved"; // approved | needs_revision | rejected
+
+    [JsonPropertyName("decision")]
+    public string Decision { get; set; } = "approved";
+
+    [JsonPropertyName("feedback")]
     public string? Feedback { get; set; }
 }
 
@@ -110,7 +142,12 @@ public class AgentStoryboardResponse
     public int RevisionNumber { get; set; }
 
     [JsonPropertyName("plan")]
-    public object Plan { get; set; } = default!;
+    public object? Plan { get; set; }
+
+    [JsonPropertyName("storyboard_plan")]
+    public object? StoryboardPlan { get; set; }
+
+    public object ResolvedPlan => Plan ?? StoryboardPlan ?? new { };
 }
 
 // POST /agent/render

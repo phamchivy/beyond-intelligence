@@ -27,41 +27,52 @@ public class CreateBriefEndpoint : Endpoint<CreateBriefJsonRequest, CreateBriefJ
         await using var conn = new NpgsqlConnection(_config.GetConnectionString("DefaultConnection"));
         await conn.OpenAsync(ct);
 
+        var taskId = Guid.NewGuid();
+        var briefId = Guid.NewGuid();
+
+        await conn.ExecuteAsync(
+            "INSERT INTO tasks (id, status) VALUES (@TaskId, 'brief_submitted')",
+            new { TaskId = taskId });
+
         const string sql = @"
             INSERT INTO briefs (
-                status, product_name, product_category, product_price, product_usp,
-                product_features, product_offer, allowed_claims, audience_profile,
-                objective, key_message, channel, aspect_ratio,
-                creative_reference, max_duration_ms, language, required_cta,
-                banned_claims, banned_content
+                id, task_id, product_info, target_audience, ad_objective,
+                key_message, channel, creative_reference, constraints
             ) VALUES (
-                'draft', @ProductName, @ProductCategory, @ProductPrice, @ProductUsp,
-                @ProductFeatures::jsonb, @ProductOffer, @AllowedClaims::jsonb, @AudienceProfile::jsonb,
-                @Objective, @KeyMessage, @Channel, @AspectRatio,
-                @CreativeReference::jsonb, @MaxDurationMs, @Language, @RequiredCta,
-                @BannedClaims::jsonb, @BannedContent::jsonb
-            ) RETURNING id;";
+                @Id, @TaskId, @ProductInfo::jsonb, @TargetAudience::jsonb, @AdObjective,
+                @KeyMessage, @Channel, @CreativeReference::jsonb, @Constraints::jsonb
+            );";
 
-        var briefId = await conn.ExecuteScalarAsync<Guid>(sql, new
+        var productInfo = JsonSerializer.Serialize(new
         {
-            req.ProductName,
-            req.ProductCategory,
-            req.ProductPrice,
-            req.ProductUsp,
-            ProductFeatures = JsonSerializer.Serialize(req.ProductFeatures ?? new List<string>()),
-            req.ProductOffer,
-            AllowedClaims = JsonSerializer.Serialize(req.AllowedClaims ?? new List<string>()),
-            AudienceProfile = JsonSerializer.Serialize(req.AudienceProfile),
-            req.Objective,
-            req.KeyMessage,
-            req.Channel,
-            req.AspectRatio,
+            name = req.ProductName,
+            category = req.ProductCategory,
+            price = req.ProductPrice,
+            usp = req.ProductUsp,
+            features = req.ProductFeatures ?? new List<string>(),
+            offer = req.ProductOffer,
+            allowed_claims = req.AllowedClaims ?? new List<string>()
+        });
+        var constraints = JsonSerializer.Serialize(new
+        {
+            duration_seconds = req.MaxDurationMs / 1000,
+            aspect_ratio = req.AspectRatio,
+            language = req.Language,
+            cta = req.RequiredCta,
+            forbidden_content = req.BannedContent ?? new List<string>()
+        });
+
+        await conn.ExecuteAsync(sql, new
+        {
+            Id = briefId,
+            TaskId = taskId,
+            ProductInfo = productInfo,
+            TargetAudience = JsonSerializer.Serialize(req.AudienceProfile ?? new { }),
+            AdObjective = req.Objective ?? "conversion",
+            KeyMessage = req.KeyMessage ?? "",
+            Channel = req.Channel ?? "tiktok",
             CreativeReference = req.CreativeReference != null ? JsonSerializer.Serialize(req.CreativeReference) : null,
-            req.MaxDurationMs,
-            req.Language,
-            req.RequiredCta,
-            BannedClaims = JsonSerializer.Serialize(req.BannedClaims ?? new List<string>()),
-            BannedContent = JsonSerializer.Serialize(req.BannedContent ?? new List<string>())
+            Constraints = constraints
         });
 
         var res =new CreateBriefJsonResponse

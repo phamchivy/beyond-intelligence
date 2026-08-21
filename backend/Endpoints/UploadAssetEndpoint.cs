@@ -46,22 +46,26 @@ public class UploadAssetEndpoint : Endpoint<UploadAssetRequest, UploadAssetRespo
         await using var conn = new NpgsqlConnection(_config.GetConnectionString("DefaultConnection"));
         await conn.OpenAsync(ct);
 
+        var taskId = await conn.ExecuteScalarAsync<Guid?>(
+            "SELECT task_id FROM briefs WHERE id = @BriefId", new { BriefId = briefId });
+        if (taskId is null)
+        {
+            ThrowError("Không tìm thấy brief.");
+        }
+
         const string sql = @"
-            INSERT INTO assets (
-                brief_id, asset_type, storage_key, processed_key, width, height, mime_type
-            ) VALUES (
-                @BriefId, @AssetType, @StorageKey, @ProcessedKey, @Width, @Height, @MimeType
-            ) RETURNING id;";
+            INSERT INTO asset_refs (id, task_id, data_object_ref, asset_type, asset_role, mime_type)
+            VALUES (@Id, @TaskId, @ObjectRef, @AssetType, @AssetRole, @MimeType)
+            RETURNING id;";
 
         var assetId = await conn.ExecuteScalarAsync<Guid>(sql, new
         {
-            BriefId = briefId,
-            AssetType = req.AssetType,
-            storageRes.StorageKey,
-            storageRes.ProcessedKey,
-            storageRes.Width,
-            storageRes.Height,
-            storageRes.MimeType
+            Id = Guid.NewGuid(),
+            TaskId = taskId,
+            ObjectRef = storageRes.StorageKey,
+            AssetType = req.AssetType == "logo" ? "logo" : "image",
+            AssetRole = req.AssetType,
+            MimeType = storageRes.MimeType ?? req.File.ContentType ?? "application/octet-stream"
         });
 
         var res = new UploadAssetResponse

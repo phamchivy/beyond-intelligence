@@ -32,6 +32,15 @@ public class ReviewStoryboardEndpoint : Endpoint<StoryboardReviewRequest>
         await using var conn = new NpgsqlConnection(_config.GetConnectionString("DefaultConnection"));
         await conn.OpenAsync(ct);
 
+        var exists = await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM storyboards WHERE id = @StoryboardId AND task_id = @TaskId", req);
+        if (exists == 0)
+        {
+            HttpContext.Response.StatusCode = StatusCodes.Status404NotFound;
+            await HttpContext.Response.WriteAsJsonAsync(new { message = "Không tìm thấy task/storyboard." }, cancellationToken: ct);
+            return;
+        }
+
         var decision = (req.Decision ?? "approved").Trim().ToLower();
 
         // Nhánh 1: Approved -> Trigger Render
@@ -65,7 +74,7 @@ public class ReviewStoryboardEndpoint : Endpoint<StoryboardReviewRequest>
             var approvedRes = new 
             { 
                 status = "render_processing", 
-                render_job_id = renderTrigger.RenderJobId 
+                render_job_id = renderJobId
             };
             await HttpContext.Response.WriteAsJsonAsync(approvedRes, cancellationToken: ct);
             return;
@@ -102,7 +111,7 @@ public class ReviewStoryboardEndpoint : Endpoint<StoryboardReviewRequest>
                 Id = newStoryboardId,
                 req.TaskId,
                 revisedStoryboard.RevisionNumber,
-                Plan = JsonSerializer.Serialize(revisedStoryboard.Plan)
+                Plan = JsonSerializer.Serialize(revisedStoryboard.ResolvedPlan)
             });
 
             var revisionRes = new
@@ -110,7 +119,7 @@ public class ReviewStoryboardEndpoint : Endpoint<StoryboardReviewRequest>
                 status = "storyboard_review",
                 storyboard_id = newStoryboardId,
                 revision_number = revisedStoryboard.RevisionNumber,
-                plan = revisedStoryboard.Plan
+                plan = revisedStoryboard.ResolvedPlan
             };
             await HttpContext.Response.WriteAsJsonAsync(revisionRes, cancellationToken: ct);
             return;
