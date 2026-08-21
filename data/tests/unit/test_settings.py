@@ -13,13 +13,24 @@ def test_layer_urls_derive_from_storage_url() -> None:
     assert s.storage.quarantine_url == "s3://my-bucket/quarantine"
 
 
-def test_storage_options_contains_credentials() -> None:
-    """storage_options carries the keys delta-rs needs on every call."""
-    s = Settings()
+def test_storage_options_contains_credentials_and_the_local_endpoint() -> None:
+    """A local endpoint (MinIO) adds AWS_ENDPOINT_URL and the unsafe-rename flag."""
+    s = Settings(storage={"endpoint_url": "http://localhost:9000"})
     options = s.storage.storage_options
     assert options["AWS_ACCESS_KEY_ID"] == s.storage.access_key
     assert options["AWS_SECRET_ACCESS_KEY"] == s.storage.secret_key
-    assert options["AWS_ENDPOINT_URL"] == s.storage.endpoint_url
+    assert options["AWS_ENDPOINT_URL"] == "http://localhost:9000"
+    assert options["AWS_S3_ALLOW_UNSAFE_RENAME"] == "true"
+
+
+def test_storage_options_omits_endpoint_for_real_s3() -> None:
+    """An empty endpoint_url (real AWS S3) must not send AWS_ENDPOINT_URL or the
+    MinIO-only unsafe-rename flag -- real S3 does proper conditional PUTs."""
+    s = Settings(storage={"endpoint_url": "", "region": "ap-southeast-1"})
+    options = s.storage.storage_options
+    assert "AWS_ENDPOINT_URL" not in options
+    assert "AWS_S3_ALLOW_UNSAFE_RENAME" not in options
+    assert options["AWS_REGION"] == "ap-southeast-1"
 
 
 def test_top_k_is_clamped_by_max_top_k() -> None:

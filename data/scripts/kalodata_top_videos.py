@@ -112,6 +112,7 @@ def to_row(video: dict) -> dict:
     """
     handle = video["belonged_creator_handle"]
     return {
+        "video_id": video["video_id"],
         "url": f"https://www.tiktok.com/@{handle}/video/{video['video_id']}",
         "title": video.get("video_title"),
         "creator": handle,

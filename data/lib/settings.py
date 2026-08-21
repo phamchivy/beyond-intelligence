@@ -22,12 +22,26 @@ class StorageSettings(BaseSettings):
     found" against a bucket that plainly exists.
     """
 
-    model_config = SettingsConfigDict(env_prefix="STORAGE_")
+    # env_file is declared on every nested class, not only on Settings --
+    # a nested BaseSettings reads its own sources independently and does
+    # not inherit the parent's env_file, so without this it silently sees
+    # only real process environment variables and never .env. Every
+    # nested class below repeats this for the same reason.
+    model_config = SettingsConfigDict(env_prefix="STORAGE_", env_file=".env", extra="ignore")
 
     url: str = "s3://bi-data-dev"
+    # Empty means "real AWS, let boto resolve it" -- MinIO is the only
+    # target that needs a fixed local URL.
     endpoint_url: str = "http://localhost:9000"
     access_key: str = "minio"
     secret_key: str = "minio123"
+    region: str = "us-east-1"
+    addressing_style: str = "auto"
+
+    @property
+    def is_local(self) -> bool:
+        """True for a fixed local endpoint (MinIO); false for real AWS S3."""
+        return bool(self.endpoint_url)
 
     @property
     def landing_url(self) -> str:
@@ -56,14 +70,25 @@ class StorageSettings(BaseSettings):
 
     @property
     def storage_options(self) -> dict[str, str]:
-        """The credential dict every delta-rs and DuckDB S3 call needs."""
-        return {
-            "AWS_ENDPOINT_URL": self.endpoint_url,
+        """The credential dict every delta-rs and DuckDB S3 call needs.
+
+        ``AWS_ALLOW_HTTP`` and ``AWS_S3_ALLOW_UNSAFE_RENAME`` are MinIO
+        compatibility flags -- real S3 supports proper conditional PUTs
+        and must not fall back to the unsafe rename path, so both are
+        scoped to ``is_local`` rather than sent unconditionally.
+        """
+        options = {
+            "AWS_REGION": self.region,
             "AWS_ACCESS_KEY_ID": self.access_key,
             "AWS_SECRET_ACCESS_KEY": self.secret_key,
-            "AWS_ALLOW_HTTP": "true",
-            "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
         }
+        if self.is_local:
+            options |= {
+                "AWS_ENDPOINT_URL": self.endpoint_url,
+                "AWS_ALLOW_HTTP": "true",
+                "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
+            }
+        return options
 
     @property
     def dlt_credentials(self) -> dict[str, str]:
@@ -72,17 +97,20 @@ class StorageSettings(BaseSettings):
         Different key names than ``storage_options`` -- dlt and delta-rs
         each define their own S3 credential shape.
         """
-        return {
+        credentials = {
             "aws_access_key_id": self.access_key,
             "aws_secret_access_key": self.secret_key,
-            "endpoint_url": self.endpoint_url,
+            "region_name": self.region,
         }
+        if self.is_local:
+            credentials["endpoint_url"] = self.endpoint_url
+        return credentials
 
 
 class DatabaseSettings(BaseSettings):
     """Postgres connection strings for the two roles this layer uses."""
 
-    model_config = SettingsConfigDict(env_prefix="DATABASE_")
+    model_config = SettingsConfigDict(env_prefix="DATABASE_", env_file=".env", extra="ignore")
 
     url: str = "postgresql://bi:bi@localhost:5432/bi"
     backend_reader_url: str = "postgresql://backend_reader:backend_reader@localhost:5432/bi"
@@ -91,7 +119,7 @@ class DatabaseSettings(BaseSettings):
 class SourceSettings(BaseSettings):
     """Connection details for the four tabular source types."""
 
-    model_config = SettingsConfigDict(env_prefix="SOURCE_")
+    model_config = SettingsConfigDict(env_prefix="SOURCE_", env_file=".env", extra="ignore")
 
     csv_bucket: str = "seeds/csv"
     xlsx_bucket: str = "seeds/xlsx"
@@ -122,7 +150,7 @@ class KalodataSettings(BaseSettings):
 class ChunkSettings(BaseSettings):
     """Document chunking limits, used by the HybridChunker path."""
 
-    model_config = SettingsConfigDict(env_prefix="CHUNK_")
+    model_config = SettingsConfigDict(env_prefix="CHUNK_", env_file=".env", extra="ignore")
 
     max_tokens: int = 512
     overlap: int = 64
@@ -131,7 +159,7 @@ class ChunkSettings(BaseSettings):
 class RetrievalSettings(BaseSettings):
     """The hybrid retrieval query's tunables -- architecture doc §10."""
 
-    model_config = SettingsConfigDict(env_prefix="RETRIEVAL_")
+    model_config = SettingsConfigDict(env_prefix="RETRIEVAL_", env_file=".env", extra="ignore")
 
     rrf_k: int = 60
     top_k: int = 5
@@ -144,7 +172,7 @@ class RetrievalSettings(BaseSettings):
 class QualitySettings(BaseSettings):
     """The threshold that decides whether a quality gate blocks downstream work."""
 
-    model_config = SettingsConfigDict(env_prefix="QUALITY_")
+    model_config = SettingsConfigDict(env_prefix="QUALITY_", env_file=".env", extra="ignore")
 
     max_rejected_ratio: float = 0.05
     blocking: bool = True
@@ -153,7 +181,7 @@ class QualitySettings(BaseSettings):
 class EvalSettings(BaseSettings):
     """Where the evaluation harness reads cases from and writes reports to."""
 
-    model_config = SettingsConfigDict(env_prefix="EVAL_")
+    model_config = SettingsConfigDict(env_prefix="EVAL_", env_file=".env", extra="ignore")
 
     dataset_path: str = "evaluation/datasets/retrieval.jsonl"
     report_dir: str = "evaluation/reports"
@@ -163,7 +191,7 @@ class EvalSettings(BaseSettings):
 class ApiSettings(BaseSettings):
     """Bind address for the FastAPI edge."""
 
-    model_config = SettingsConfigDict(env_prefix="API_")
+    model_config = SettingsConfigDict(env_prefix="API_", env_file=".env", extra="ignore")
 
     host: str = "0.0.0.0"
     port: int = 8002
