@@ -4,11 +4,17 @@ Vi tri file nay: agent/application/services/storyboard_session_service.py
 StoryboardSessionService -- dieu phoi vong lap Human-in-the-Loop cho
 storyboard, DUNG THEO DUNG luong da chot trong system-integration-flow.md:
 
-  - Sua storyboard (start_session / revise_session) CHI la van ban --
-    KHONG goi Seedance moi lan sua, tranh ton quota/thoi gian cho
-    nhung ban nhap chua chac da duyet.
+  - Sua storyboard (start_session / revise_session) CHI la du lieu CO
+    CAU TRUC (StoryboardPlan) -- KHONG goi Seedance moi lan sua, tranh
+    ton quota/thoi gian cho nhung ban nhap chua chac da duyet.
   - Render video CHI xay ra MOT LAN, sau khi storyboard da duoc APPROVE
     (goi render_final()) -- dung dung buoc 9 trong flow.
+
+LLM duoc BAT BUOC tra ve JSON dung StoryboardPlan.model_json_schema()
+(gan truc tiep vao prompt, luon dong bo voi schema, khong bao gio lech)
+-- thay vi van ban tu do (markdown) nhu ban truoc, de Frontend co du
+lieu ro rang render UI (timeline canh quay, chu overlay...) thay vi
+phai tu parse text.
 
 Khong dung ReasoningService (thiet ke rieng cho vong lap Agent, gan
 voi AgentState) -- goi thang LLM port qua call_llm_with_retry (dung
@@ -18,16 +24,15 @@ Luu Context (Brief + anh tham chieu + lich su revision) vao Memory
 port, key theo task_id -- de moi lan sua chi can gui `feedback`, va de
 render_final() sau nay tu doc lai storyboard + anh da duyet, KHONG can
 Backend gui lai du lieu goc.
-
-CHUA co StoryboardPlan schema chinh thuc (se lam khi code business/
-domains/.../schemas/) -- storyboard hien la VAN BAN TU DO do LLM sinh
-ra (hook, cac shot, cta duoc mo ta bang loi), dung truc tiep lam prompt
-render video. Se thay bang cau truc JSON Schema chat che hon sau.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field, replace
 
+import pydantic
+
+from business.domains.ai_ads_video_generator.schemas.storyboard_plan import StoryboardPlan
 from domain.policies.retry_policy import RetryPolicy
 from domain.ports.llm import LLM, ImagePart, LLMMessage, LLMRequest, MessageRole
 from domain.ports.memory import Memory, MemoryItem
@@ -39,43 +44,53 @@ logger = get_logger(__name__)
 
 _SESSION_NAMESPACE = "storyboard_sessions"
 
+_STORYBOARD_SCHEMA_JSON = json.dumps(StoryboardPlan.model_json_schema(), ensure_ascii=False)
+
 _DEFAULT_SYSTEM_PROMPT = (
     "Ban la chuyen gia sang tao noi dung quang cao ngan cho TikTok/Reels. "
-    "Tu Brief san pham duoc cung cap, hay viet mot storyboard ro rang gom: "
-    "(1) Hook mo dau trong 2-3 giay dau, (2) Cac canh quay mo ta san pham/loi ich "
-    "theo thu tu, (3) Cau Call-to-Action ket thuc. Mo ta chi tiet tung canh quay "
-    "(goc may, chuyen dong, chu de xuat hien tren man hinh) de co the dung truc "
-    "tiep lam huong dan sinh video."
+    "Tu Brief san pham duoc cung cap, hay tao mot storyboard ro rang gom "
+    "Hook mo dau, cac Scene mo ta san pham/loi ich theo thu tu, va Call-to-Action "
+    "ket thuc. Moi doan can co thoi diem bat dau/ket thuc (giay), mo ta canh quay "
+    "chi tiet (goc may, chuyen dong), chu tren man hinh (neu co), va ghi chu am thanh.\n\n"
+    "BAT BUOC: chi tra ve MOT DOI TUONG JSON DUY NHAT, dung CHINH XAC JSON Schema "
+    "sau day -- KHONG duoc bao boc trong markdown code fence, KHONG giai thich gi them:\n"
+    f"{_STORYBOARD_SCHEMA_JSON}"
+)
+
+# Prompt DICH RIENG cho VideoRenderer -- KHONG dung thang StoryboardPlan
+# (co the co noi dung tieng Viet trong scene_description/on_screen_text)
+# lam prompt render truc tiep. Model sinh video (Seedance) huan luyen
+# chu yeu tren du lieu tieng Anh -- dua noi dung tieng Viet vao de bi
+# loi chinh ta/font chu tren video, khong hieu dung y do. Buoc nay dich
+# StoryboardPlan.to_render_prompt_context() thanh 1 doan mo ta VIDEO
+# PROMPT bang tieng Anh, sinh dong RIENG, chi dung luc render_final().
+_RENDER_PROMPT_SYSTEM_PROMPT = (
+    "You are a professional prompt writer for AI video generation models. "
+    "Translate and rewrite the given storyboard (which may contain Vietnamese "
+    "text) into a single, vivid ENGLISH video generation prompt. Requirements: "
+    "(1) Write ENTIRELY in English -- do not include any Vietnamese text, "
+    "(2) Any on-screen text/caption/CTA mentioned must be translated to English, "
+    "(3) Explicitly state the total video duration in seconds as given, and "
+    "describe pacing per scene using the exact time ranges provided so the video "
+    "is NOT sped up or compressed -- each scene must get its full described "
+    "duration, (4) Describe camera angle, motion, and product focus clearly for "
+    "each scene. Output ONLY the prompt text, no explanation."
 )
 
 
-class MaxRevisionsExceededError(Exception):
-    """Vuot qua so lan sua storyboard toi da cho phep (settings.max_storyboard_revisions)."""
-
-
-class SessionNotFoundError(Exception):
-    """Khong tim thay storyboard session cho task_id da cho (chua start hoac da finalize)."""
+class StoryboardParseError(Exception):
+    """LLM tra ve JSON khong hop le hoac khong khop StoryboardPlan schema."""
 
 
 @dataclass(frozen=True, slots=True)
 class StoryboardRevision:
-    """Mot phien ban storyboard (CHI van ban), sinh tu revision truoc + feedback (neu co)."""
-
     revision_number: int
-    storyboard_text: str
-    feedback: str | None  # feedback dan den revision NAY -- None cho revision 1
+    plan: StoryboardPlan
+    feedback: str | None
 
 
 @dataclass(frozen=True, slots=True)
 class StorySession:
-    """
-    Toan bo boi canh can nho qua nhieu lan sua storyboard cho MOT task.
-
-    Luu nguyen vao Memory (namespace _SESSION_NAMESPACE, key = task_id)
-    -- immutable, moi lan cap nhat tao instance moi (dung pattern da ap
-    dung cho AgentState).
-    """
-
     task_id: str
     brief: dict
     reference_images: tuple[ReferenceImage, ...]
@@ -91,20 +106,14 @@ class StorySession:
 
 @dataclass(frozen=True, slots=True)
 class StoryboardResult:
-    """Ket qua tra ve cho Backend sau moi lan sinh/sua storyboard (KHONG kem render)."""
+    """Ket qua tra ve cho Backend sau moi lan sinh/sua storyboard -- CO CAU TRUC, khong con la text tu do."""
 
     task_id: str
     revision_number: int
-    storyboard_text: str
+    plan: StoryboardPlan
 
 
 class StoryboardSessionService:
-    """
-    Dieu phoi vong lap: sinh storyboard (text) -> nguoi dung review ->
-    sua lai (text, lap lai neu can) -> APPROVED -> render_final() goi
-    Seedance DUY NHAT MOT LAN.
-    """
-
     def __init__(
         self,
         llm: LLM,
@@ -127,11 +136,11 @@ class StoryboardSessionService:
         brief: dict,
         reference_images: tuple[ReferenceImage, ...] = (),
     ) -> StoryboardResult:
-        """Sinh storyboard lan dau (revision 1) tu Brief -- CHI van ban, khong render."""
-        storyboard_text = await self._generate_storyboard_text(
-            brief, reference_images, feedback=None, previous_storyboard=None
+        """Sinh storyboard lan dau (revision 1) tu Brief -- tra ve StoryboardPlan co cau truc."""
+        plan = await self._generate_storyboard_plan(
+            brief, reference_images, feedback=None, previous_plan=None
         )
-        revision = StoryboardRevision(revision_number=1, storyboard_text=storyboard_text, feedback=None)
+        revision = StoryboardRevision(revision_number=1, plan=plan, feedback=None)
         session = StorySession(
             task_id=task_id,
             brief=brief,
@@ -141,13 +150,12 @@ class StoryboardSessionService:
         await self._save_session(session)
         log_event(logger, "info", "storyboard_session_started", task_id=task_id, revision=1)
 
-        return StoryboardResult(task_id=task_id, revision_number=1, storyboard_text=storyboard_text)
+        return StoryboardResult(task_id=task_id, revision_number=1, plan=plan)
 
     async def revise_session(self, task_id: str, feedback: str) -> StoryboardResult:
         """
-        Sinh lai storyboard (CHI van ban, khong render) dua tren feedback
-        -- CHI can task_id + feedback, Brief/asset tu dong lay lai tu
-        Memory (khong can Backend gui lai).
+        Sinh lai storyboard (co cau truc) dua tren feedback -- CHI can
+        task_id + feedback, Brief/asset tu dong lay lai tu Memory.
         """
         session = await self._load_session(task_id)
         next_revision_number = session.latest.revision_number + 1
@@ -165,14 +173,14 @@ class StoryboardSessionService:
                 f"Can chuyen sang xu ly thu cong (needs_manual_review)."
             )
 
-        storyboard_text = await self._generate_storyboard_text(
+        plan = await self._generate_storyboard_plan(
             session.brief,
             session.reference_images,
             feedback=feedback,
-            previous_storyboard=session.latest.storyboard_text,
+            previous_plan=session.latest.plan,
         )
         revision = StoryboardRevision(
-            revision_number=next_revision_number, storyboard_text=storyboard_text, feedback=feedback
+            revision_number=next_revision_number, plan=plan, feedback=feedback
         )
         updated_session = session.with_new_revision(revision)
         await self._save_session(updated_session)
@@ -180,24 +188,30 @@ class StoryboardSessionService:
             logger, "info", "storyboard_session_revised", task_id=task_id, revision=next_revision_number
         )
 
-        return StoryboardResult(
-            task_id=task_id, revision_number=next_revision_number, storyboard_text=storyboard_text
-        )
+        return StoryboardResult(task_id=task_id, revision_number=next_revision_number, plan=plan)
 
     async def render_final(self, task_id: str) -> RenderJob:
         """
         Render video THAT, DUY NHAT MOT LAN -- goi sau khi storyboard da
-        duoc nguoi dung APPROVE (Backend tu quyet dinh khi nao goi ham
-        nay, dung theo buoc 9 trong system-integration-flow.md).
+        duoc nguoi dung APPROVE.
 
-        Dung storyboard cua REVISION MOI NHAT trong session (gia dinh
-        Backend chi goi ham nay sau khi da approve dung revision cuoi
-        cung nguoi dung xem).
+        duration_seconds lay TRUC TIEP tu brief.constraints (uu tien) --
+        neu khong co, lay tu plan.duration_seconds (LLM da tu dien khi
+        sinh storyboard, thuong khop voi brief nhung brief la nguon tin
+        cay hon vi la yeu cau goc cua nguoi dung).
         """
         session = await self._load_session(task_id)
+        plan = session.latest.plan
+
+        render_prompt = await self._translate_to_render_prompt(plan)
+        duration_seconds = (
+            self._extract_duration_seconds(session.brief) or plan.duration_seconds
+        )
+
         request = RenderRequest(
-            prompt=session.latest.storyboard_text,
+            prompt=render_prompt,
             reference_images=session.reference_images,
+            duration_seconds=duration_seconds,
         )
         render_job = await self._video_renderer.submit(request)
         log_event(
@@ -207,11 +221,11 @@ class StoryboardSessionService:
             task_id=task_id,
             revision=session.latest.revision_number,
             render_job_id=render_job.job_id,
+            duration_seconds=duration_seconds,
         )
         return render_job
 
     async def finalize_session(self, task_id: str) -> None:
-        """Don Memory sau khi task hoan tat (da render xong) hoac bi huy -- goi sau cung."""
         await self._memory.delete(task_id, namespace=_SESSION_NAMESPACE)
         log_event(logger, "info", "storyboard_session_finalized", task_id=task_id)
 
@@ -219,14 +233,14 @@ class StoryboardSessionService:
     # Noi bo
     # ------------------------------------------------------------------
 
-    async def _generate_storyboard_text(
+    async def _generate_storyboard_plan(
         self,
         brief: dict,
         reference_images: tuple[ReferenceImage, ...],
         feedback: str | None,
-        previous_storyboard: str | None,
-    ) -> str:
-        prompt = self._build_prompt(brief, feedback, previous_storyboard)
+        previous_plan: StoryboardPlan | None,
+    ) -> StoryboardPlan:
+        prompt = self._build_prompt(brief, feedback, previous_plan)
         images = tuple(
             ImagePart(image_bytes=img.image_bytes, mime_type=img.mime_type)
             for img in reference_images
@@ -239,19 +253,81 @@ class StoryboardSessionService:
             )
         )
         response = await call_llm_with_retry(self._llm, request, self._retry_policy, logger)
+        return self._parse_storyboard_plan(response.content)
+
+    @staticmethod
+    def _parse_storyboard_plan(raw_content: str) -> StoryboardPlan:
+        """
+        Parse + validate JSON tra ve tu LLM thanh StoryboardPlan. Bao
+        loi RO RANG (StoryboardParseError) neu that bai, KHONG fallback
+        am tham ve gia tri rong -- storyboard rong se lam Frontend/
+        VideoRenderer hong hoan toan, khac voi truong hop InsightService
+        (data/) co the chap nhan criteria rong.
+        """
+        cleaned = raw_content.strip()
+        # LLM doi khi van boc JSON trong markdown code fence du da duoc
+        # yeu cau khong lam vay -- go bo neu co, tang do ben cua parser.
+        if cleaned.startswith("```"):
+            cleaned = cleaned.strip("`")
+            if cleaned.startswith("json"):
+                cleaned = cleaned[4:]
+            cleaned = cleaned.strip()
+
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            raise StoryboardParseError(
+                f"LLM khong tra ve JSON hop le cho storyboard: {exc}. Raw: {raw_content[:200]}"
+            ) from exc
+
+        try:
+            return StoryboardPlan.model_validate(data)
+        except pydantic.ValidationError as exc:
+            raise StoryboardParseError(
+                f"JSON tra ve khong khop StoryboardPlan schema: {exc}"
+            ) from exc
+
+    @staticmethod
+    def _build_prompt(
+        brief: dict, feedback: str | None, previous_plan: StoryboardPlan | None
+    ) -> str:
+        if feedback is None:
+            return f"Brief san pham:\n{json.dumps(brief, ensure_ascii=False)}"
+
+        return (
+            f"Storyboard truoc do (JSON):\n{previous_plan.model_dump_json()}\n\n"
+            f"Phan hoi cua nguoi dung can dieu chinh:\n{feedback}\n\n"
+            f"Hay tra ve StoryboardPlan JSON MOI, giu nguyen phan nguoi dung hai long, "
+            f"chi sua theo dung phan hoi tren."
+        )
+
+    async def _translate_to_render_prompt(self, plan: StoryboardPlan) -> str:
+        request = LLMRequest(
+            messages=(
+                LLMMessage(role=MessageRole.SYSTEM, content=_RENDER_PROMPT_SYSTEM_PROMPT),
+                LLMMessage(
+                    role=MessageRole.USER,
+                    content=(
+                        f"Storyboard:\n{plan.to_render_prompt_context()}\n\n"
+                        f"Total duration required: {plan.duration_seconds} seconds."
+                    ),
+                ),
+            )
+        )
+        response = await call_llm_with_retry(self._llm, request, self._retry_policy, logger)
         return response.content
 
     @staticmethod
-    def _build_prompt(brief: dict, feedback: str | None, previous_storyboard: str | None) -> str:
-        if feedback is None:
-            return f"Brief san pham:\n{brief}"
-
-        return (
-            f"Storyboard truoc do:\n{previous_storyboard}\n\n"
-            f"Phan hoi cua nguoi dung can dieu chinh:\n{feedback}\n\n"
-            f"Hay viet lai storyboard, giu nguyen phan nguoi dung hai long, "
-            f"chi sua theo dung phan hoi tren."
-        )
+    def _extract_duration_seconds(brief: dict) -> float | None:
+        constraints = brief.get("constraints") or {}
+        duration = constraints.get("duration_seconds")
+        if duration is None:
+            return None
+        try:
+            return float(duration)
+        except (TypeError, ValueError):
+            log_event(logger, "warning", "invalid_duration_seconds_in_brief", raw_value=duration)
+            return None
 
     async def _save_session(self, session: StorySession) -> None:
         await self._memory.save(
@@ -266,3 +342,11 @@ class StoryboardSessionService:
                 f"Can goi start_session() truoc."
             )
         return item.value
+
+
+class MaxRevisionsExceededError(Exception):
+    """Vuot qua so lan sua storyboard toi da cho phep (settings.max_storyboard_revisions)."""
+
+
+class SessionNotFoundError(Exception):
+    """Khong tim thay storyboard session cho task_id da cho (chua start hoac da finalize)."""

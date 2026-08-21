@@ -35,9 +35,11 @@ class MockVideoRenderer:
     _job_ids: "count" = field(default_factory=lambda: count(1), init=False)
     _poll_counts: dict[str, int] = field(default_factory=dict, init=False)
     submit_call_count: int = field(default=0, init=False)
+    last_request: RenderRequest | None = field(default=None, init=False)
 
     async def submit(self, request: RenderRequest) -> RenderJob:
         self.submit_call_count += 1
+        self.last_request = request
         job_id = f"mock-job-{next(self._job_ids)}"
         self._poll_counts[job_id] = 0
         return RenderJob(job_id=job_id, status=RenderJobStatus.QUEUED)

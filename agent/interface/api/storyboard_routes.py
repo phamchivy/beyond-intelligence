@@ -79,7 +79,7 @@ async def start_storyboard(
     return StoryboardResponse(
         task_id=result.task_id,
         revision_number=result.revision_number,
-        storyboard_text=result.storyboard_text,
+        plan=result.plan,
     )
 
 
@@ -98,7 +98,7 @@ async def revise_storyboard(
     return StoryboardResponse(
         task_id=result.task_id,
         revision_number=result.revision_number,
-        storyboard_text=result.storyboard_text,
+        plan=result.plan,
     )
 
 

@@ -39,7 +39,7 @@ def seedance_renderer() -> SeedanceRenderer:
 
 
 async def _poll_until_done(
-    renderer: SeedanceRenderer, job_id: str, max_wait_seconds: float = 300.0
+    renderer: SeedanceRenderer, job_id: str, max_wait_seconds: float = 600.0
 ):
     """
     Poll get_status() dinh ky cho den khi COMPLETED/FAILED hoac het
@@ -69,7 +69,7 @@ class TestSeedanceRendererReal:
                 "anh sang tu nhien, camera zoom nhe vao san pham"
             ),
             aspect_ratio="9:16",
-            duration_seconds=4,
+            duration_seconds=15,
         )
 
         job = await seedance_renderer.submit(request)

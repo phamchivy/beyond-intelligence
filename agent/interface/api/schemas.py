@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from business.domains.ai_ads_video_generator.schemas.storyboard_plan import StoryboardPlan
+
 
 class ReferenceAssetIn(BaseModel):
     """Anh tham chieu Backend gui kem (da la noi dung that -- xem buoc 3b/4 trong tai lieu)."""
@@ -36,11 +38,16 @@ class ReviseStoryboardRequest(BaseModel):
 
 
 class StoryboardResponse(BaseModel):
-    """Response chung cho ca start va revise -- khop buoc 5 trong system-data-schemas.md."""
+    """
+    Response chung cho ca start va revise -- khop buoc 5 trong
+    system-data-schemas.md, DA CAP NHAT sang StoryboardPlan co cau
+    truc (thay the storyboard_text tu do truoc day) de Frontend co du
+    lieu ro rang render UI (timeline canh quay, chu overlay tung doan...).
+    """
 
     task_id: str
     revision_number: int
-    storyboard_text: str
+    plan: StoryboardPlan
 
 
 class RenderFinalRequest(BaseModel):
