@@ -7,10 +7,12 @@ metrics that made it interesting. Run from `data/`::
     python -m scripts.kalodata_download_videos "electric shaver"
     python -m scripts.kalodata_download_videos "electric shaver" --limit 10
 
-Blobs land at ``landing/tiktok/{video_id}.mp4``; one row per video is
-appended to the Bronze table ``tiktok_video``. A video already present in
-Landing is skipped, not re-downloaded -- a TikTok video's bytes never
-change, so ``video_id`` is a stable idempotency key.
+Blobs land at
+``trending_tiktok_videos/landing/{category}/{product}/{date}/{title}_{video_id}_{timestamp}.mp4``;
+one row per video is appended to the Bronze table ``tiktok_video``. A
+video already fetched for that category/product/day is skipped, not
+re-downloaded -- matched by ``video_id`` inside the filename, since the
+timestamp changes on every run.
 
 This fetches TikTok videos into private storage for internal analysis.
 That is ordinary research use, but it is not something TikTok's terms
@@ -20,10 +22,12 @@ invite -- keep the blobs internal, never re-publish them.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import tempfile
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 import polars as pl
@@ -47,6 +51,27 @@ _MAX_FILESIZE_BYTES = 200 * 1024 * 1024
 # this project carries no ffmpeg (data-architecture.md #6: "no media: no
 # ffmpeg, no google-genai").
 _FORMAT = "best[ext=mp4]/best"
+
+_ROOT = "trending_tiktok_videos/landing"
+_SLUG_RE = re.compile(r"[^\w\-]+", re.UNICODE)
+
+
+def _slug(text: str, *, max_len: int = 60) -> str:
+    """Turn free text into a safe, readable S3 key segment.
+
+    Args:
+        text: A category name, product name or video title -- any of
+            which can carry slashes, hashtags, emoji or punctuation that
+            would otherwise corrupt the key's path structure.
+        max_len: Truncation length, keeping keys well under S3's 1024-byte
+            cap even for a long video title.
+
+    Returns:
+        Anything but word characters and hyphens collapsed to a single
+        underscore, or ``"unknown"`` if that leaves nothing.
+    """
+    slug = _SLUG_RE.sub("_", text or "").strip("_")
+    return slug[:max_len].strip("_") or "unknown"
 
 
 @dataclass
@@ -86,30 +111,70 @@ def _landing_fs():
     )
 
 
-def _landing_key(video_id: str) -> str:
-    """Return the Landing object key for one video, without the ``s3://`` scheme."""
-    root = settings.storage.landing_url.replace("s3://", "")
-    return f"{root}/tiktok/{video_id}.mp4"
+def _day_prefix(category_name: str, product_name: str, date_str: str) -> str:
+    """Return the day-partitioned Landing prefix for one category/product.
+
+    Args:
+        category_name: The video's ranked category name.
+        product_name: The keyword's top-matching product name.
+        date_str: The run's date, ``YYYY-MM-DD``.
+
+    Returns:
+        A key prefix, without the ``s3://`` scheme, ending in ``/``.
+    """
+    root = settings.storage.url.replace("s3://", "")
+    return f"{root}/{_ROOT}/{_slug(category_name)}/{_slug(product_name)}/{date_str}/"
 
 
-def _download_one(fs, row: dict, keyword: str) -> FetchResult:
-    """Fetch one ranked video into Landing, unless it is already there.
+def _landing_key(prefix: str, title: str, video_id: str, timestamp: str) -> str:
+    """Build one video's object key under an already-resolved day prefix."""
+    return f"{prefix}{_slug(title)}_{video_id}_{timestamp}.mp4"
+
+
+def _existing_key(fs, prefix: str, video_id: str) -> str | None:
+    """Return today's already-fetched key for this video, if any.
+
+    The timestamp in every key changes on every run, so an exact-key
+    ``fs.exists`` check can never match a prior run -- instead this globs
+    the day's prefix for a filename carrying this ``video_id``, which is
+    the one part of the name that stays stable for the same video on the
+    same day.
+
+    Args:
+        fs: An open ``s3fs.S3FileSystem`` handle.
+        prefix: A day prefix from :func:`_day_prefix`.
+        video_id: The TikTok video ID to look for.
+
+    Returns:
+        The matching key, or ``None`` if this video has not been fetched
+        into this prefix yet today.
+    """
+    matches = fs.glob(f"{prefix}*_{video_id}_*.mp4")
+    return matches[0] if matches else None
+
+
+def _download_one(fs, row: dict, keyword: str, prefix: str, timestamp: str) -> FetchResult:
+    """Fetch one ranked video into Landing, unless it is already there today.
 
     Args:
         fs: An open ``s3fs.S3FileSystem`` handle (untyped here -- s3fs is
             imported lazily, see :func:`_landing_fs`).
         row: One row from :func:`scripts.kalodata_top_videos.top_videos`.
         keyword: The product keyword this run was searched under.
+        prefix: This run's day prefix, from :func:`_day_prefix`.
+        timestamp: This run's timestamp, shared by every video fetched in
+            the same run.
 
     Returns:
         The outcome -- downloaded, skipped as already-present, or failed.
     """
     video_id = row["video_id"]
-    key = _landing_key(video_id)
 
-    if fs.exists(key):
+    if _existing_key(fs, prefix, video_id):
         log_event(logger, "info", "video_skipped_existing", video_id=video_id)
         return FetchResult(video_id, None, downloaded=False, skipped=True)
+
+    key = _landing_key(prefix, row.get("title") or video_id, video_id, timestamp)
 
     with tempfile.TemporaryDirectory() as tmp:
         local_path = Path(tmp) / f"{video_id}.mp4"
@@ -148,6 +213,8 @@ def _download_one(fs, row: dict, keyword: str) -> FetchResult:
             "views": row.get("views"),
             "ads_roas": row.get("ads_roas"),
             "ai_video": row.get("ai_video"),
+            "product_name": row.get("product_name"),
+            "category_name": row.get("category_name"),
         },
         downloaded=True,
         skipped=False,
@@ -170,8 +237,20 @@ def download_top_videos(
         lose the other nine.
     """
     rows = top_videos(keyword, date_range=date_range, limit=limit)
+    if not rows:
+        return []
+
+    # One category/product/day prefix and one timestamp for the whole run --
+    # every row shares the same resolved category and product (top_videos
+    # ranks within a single category per call), and a per-run timestamp
+    # keeps a batch of videos fetched together grouped by name.
+    now = datetime.now(UTC)
+    date_str = now.strftime("%Y-%m-%d")
+    prefix = _day_prefix(rows[0]["category_name"], rows[0]["product_name"], date_str)
+    timestamp = now.strftime("%Y%m%dT%H%M%SZ")
+
     fs = _landing_fs()
-    return [_download_one(fs, row, keyword) for row in rows]
+    return [_download_one(fs, row, keyword, prefix, timestamp) for row in rows]
 
 
 def _write_bronze(results: list[FetchResult]) -> int | None:

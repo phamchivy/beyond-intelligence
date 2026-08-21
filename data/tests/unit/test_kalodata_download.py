@@ -6,12 +6,12 @@ are all faked in-process.
 
 from __future__ import annotations
 
+import fnmatch
 from pathlib import Path
 
 import pytest
 import yt_dlp
 
-from lib.settings import settings
 from scripts import kalodata_download_videos as d
 
 
@@ -44,26 +44,29 @@ class _FakeS3:
     """Stands in for s3fs.S3FileSystem: an in-memory set of existing keys."""
 
     def __init__(self, existing: set[str] | None = None) -> None:
-        self.existing = existing or set()
+        self.existing = set(existing or [])
         self.put_calls: list[tuple[str, str]] = []
 
-    def exists(self, key: str) -> bool:
-        return key in self.existing
+    def glob(self, pattern: str) -> list[str]:
+        return sorted(k for k in self.existing if fnmatch.fnmatch(k, pattern))
 
     def put(self, local_path: str, key: str) -> None:
         self.put_calls.append((local_path, key))
         self.existing.add(key)
 
 
+_PREFIX = "bucket/trending_tiktok_videos/landing/beauty/electric_shaver/2026-08-21/"
+_TIMESTAMP = "20260821T120000Z"
+
 _ROW_A = {
     "video_id": "v1", "url": "https://www.tiktok.com/@alice/video/v1",
     "title": "vid A", "creator": "alice", "revenue": 100.0, "views": 1000,
-    "ads_roas": 2.0, "ai_video": 0,
+    "ads_roas": 2.0, "ai_video": 0, "category_name": "Beauty", "product_name": "Electric Shaver",
 }
 _ROW_B = {
     "video_id": "v2", "url": "https://www.tiktok.com/@bob/video/v2",
     "title": "vid B", "creator": "bob", "revenue": 50.0, "views": 500,
-    "ads_roas": 1.5, "ai_video": 1,
+    "ads_roas": 1.5, "ai_video": 1, "category_name": "Beauty", "product_name": "Electric Shaver",
 }
 
 
@@ -74,15 +77,36 @@ def _no_real_download(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(d.yt_dlp, "YoutubeDL", _FakeYoutubeDL)
 
 
-def test_landing_key_is_scoped_under_tiktok_by_video_id():
-    key = d._landing_key("7404191282148511007")
-    root = settings.storage.landing_url.replace("s3://", "")
-    assert key == f"{root}/tiktok/7404191282148511007.mp4"
+def test_slug_collapses_unsafe_characters():
+    assert d._slug("Beauty & Personal Care!!") == "Beauty_Personal_Care"
+    assert d._slug("  ") == "unknown"
+    assert d._slug("") == "unknown"
+
+
+def test_day_prefix_nests_by_category_then_product_then_date():
+    prefix = d._day_prefix("Beauty & Care", "Electric Shaver!!", "2026-08-21")
+    assert prefix == (
+        f"{d.settings.storage.url.replace('s3://', '')}/trending_tiktok_videos/landing/"
+        "Beauty_Care/Electric_Shaver/2026-08-21/"
+    )
+
+
+def test_landing_key_embeds_slugged_title_video_id_and_timestamp():
+    key = d._landing_key(_PREFIX, "Cool Video! #trend", "v1", _TIMESTAMP)
+    assert key == f"{_PREFIX}Cool_Video_trend_v1_{_TIMESTAMP}.mp4"
+
+
+def test_existing_key_matches_by_video_id_regardless_of_title_or_timestamp():
+    fs = _FakeS3(existing={f"{_PREFIX}some_old_title_v1_20260101T000000Z.mp4"})
+    assert d._existing_key(fs, _PREFIX, "v1") is not None
+    assert d._existing_key(fs, _PREFIX, "v2") is None
 
 
 def test_existing_video_is_skipped_without_downloading():
-    fs = _FakeS3(existing={d._landing_key("v1")})
-    result = d._download_one(fs, _ROW_A, keyword="electric shaver")
+    existing_key = d._landing_key(_PREFIX, "old title", "v1", "20260101T000000Z")
+    fs = _FakeS3(existing={existing_key})
+
+    result = d._download_one(fs, _ROW_A, "electric shaver", _PREFIX, _TIMESTAMP)
 
     assert result.skipped is True
     assert result.downloaded is False
@@ -92,13 +116,17 @@ def test_existing_video_is_skipped_without_downloading():
 
 def test_new_video_downloads_and_uploads_to_landing():
     fs = _FakeS3()
-    result = d._download_one(fs, _ROW_A, keyword="electric shaver")
+    result = d._download_one(fs, _ROW_A, "electric shaver", _PREFIX, _TIMESTAMP)
 
     assert result.downloaded is True
     assert result.row["video_id"] == "v1"
     assert result.row["sha256"]  # computed from the (fake) written bytes
     assert result.row["duration_s"] == 42
-    assert fs.put_calls[0][1] == d._landing_key("v1")
+    assert result.row["category_name"] == "Beauty"
+    assert result.row["product_name"] == "Electric Shaver"
+
+    expected_key = d._landing_key(_PREFIX, "vid A", "v1", _TIMESTAMP)
+    assert fs.put_calls[0][1] == expected_key
 
 
 def test_a_failed_download_does_not_abort_the_rest(monkeypatch: pytest.MonkeyPatch):
@@ -111,6 +139,12 @@ def test_a_failed_download_does_not_abort_the_rest(monkeypatch: pytest.MonkeyPat
     assert [r.downloaded for r in results] == [False, True]
     assert results[0].row is None
     assert results[1].row["video_id"] == "v2"
+
+
+def test_download_top_videos_is_a_noop_when_nothing_ranked(monkeypatch: pytest.MonkeyPatch):
+    """No ranked videos means no category/product to build a prefix from."""
+    monkeypatch.setattr(d, "top_videos", lambda keyword, **kw: [])
+    assert d.download_top_videos("no such product") == []
 
 
 def test_bronze_row_carries_the_kalodata_metrics_through(monkeypatch: pytest.MonkeyPatch):
@@ -132,6 +166,7 @@ def test_bronze_row_carries_the_kalodata_metrics_through(monkeypatch: pytest.Mon
     rows = captured["table"].to_pylist()
     assert {r["video_id"] for r in rows} == {"v1", "v2"}
     assert rows[0]["revenue"] in (100.0, 50.0)  # the Kalodata metric survived
+    assert rows[0]["category_name"] == "Beauty"
 
 
 def test_write_bronze_is_a_noop_when_nothing_downloaded():
