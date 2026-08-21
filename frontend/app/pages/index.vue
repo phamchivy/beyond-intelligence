@@ -1,145 +1,138 @@
 <script setup lang="ts">
-const features = [
-  {
-    title: 'Fast UI scaffolding',
-    description: 'Landing page, demo workspace, and reusable cards are ready so you can focus on your product idea.',
-    icon: 'i-lucide-layout-template'
-  },
-  {
-    title: 'API starter routes',
-    description: 'Health checks and mock analytics endpoints are already wired up for quick integration.',
-    icon: 'i-lucide-route'
-  },
-  {
-    title: 'AI UX shell',
-    description: 'Drop in your own model or workflow behind the built-in assistant preview and analytics chart.',
-    icon: 'i-lucide-sparkles'
-  }
-]
+const { fetchApi } = useApi()
 
-const workflow = [
-  {
-    title: 'Describe your idea',
-    description: 'Swap the sample copy for your own product story and value proposition.'
-  },
-  {
-    title: 'Connect your data',
-    description: 'Use the demo API routes as a template for your real backend or AI pipeline.'
-  },
-  {
-    title: 'Launch the prototype',
-    description: 'Share the landing page and demo workspace with judges, mentors, or early testers.'
-  }
-]
+const { data: overview, pending } = await useAsyncData('dashboard-overview', () =>
+  fetchApi<{ totalVideos: number; successRate: number; avgWatchTime: number; activeCampaigns: number; weeklyTrend: number[]; recentVideos: Array<{ id: string; title: string; channel: string; status: string; pulls: string; watchTime: string }> }>('/dashboard/overview')
+)
 
-const stack = [
+const summaryCards = computed(() => [
   {
-    title: 'Nuxt 4',
-    description: 'Modern SSR-first framework with file-based routing and excellent DX.'
+    label: 'Total videos',
+    value: overview.value?.totalVideos ?? 0,
+    detail: '+18% this month'
   },
   {
-    title: 'Nuxt UI',
-    description: 'Accessible and customizable components for dashboards, cards, and layouts.'
+    label: 'Success rate',
+    value: `${overview.value?.successRate ?? 0}%`,
+    detail: 'ROAS > 4.2x'
   },
   {
-    title: 'API-ready',
-    description: 'Server routes are built in so your prototype can quickly talk to a backend.'
+    label: 'Avg watch time',
+    value: `${overview.value?.avgWatchTime ?? 0}s`,
+    detail: 'Above benchmark'
+  },
+  {
+    label: 'Active campaigns',
+    value: overview.value?.activeCampaigns ?? 0,
+    detail: '7 optimized this week'
   }
-]
+])
 
-const heroLinks = [
-  { label: 'Open demo', to: '/demo', icon: 'i-lucide-play' },
-  { label: 'Explore stack', to: '#features', color: 'neutral' as const, variant: 'subtle' as const, trailingIcon: 'i-lucide-arrow-right' }
-]
+const trendBars = computed(() => overview.value?.weeklyTrend ?? [])
 </script>
 
 <template>
-  <div class="space-y-14">
-    <UPageHero
-      headline="AI hackathon boilerplate"
-      title="Ship your AI product in days, not weeks"
-      description="A polished Nuxt 4 starter with a landing page, demo workspace, reusable UI blocks, and API routes ready for your next prototype."
-      :links="heroLinks"
-      orientation="horizontal"
-    >
-      <div class="rounded-3xl border border-muted/60 bg-elevated/80 p-4 shadow-2xl shadow-primary/10">
-        <div class="rounded-2xl border border-default bg-default/70 p-4 space-y-4">
+  <div class="space-y-8">
+    <section class="flex flex-col gap-4 rounded-3xl border border-white/10 bg-gradient-to-br from-indigo-500/15 via-zinc-900 to-zinc-950 p-6 md:flex-row md:items-end md:justify-between">
+      <div>
+        <p class="text-sm uppercase tracking-[0.24em] text-indigo-300">Overview</p>
+        <h1 class="mt-3 text-3xl font-semibold text-white">AI Shorts performance dashboard</h1>
+      </div>
+
+      <UButton to="/workspace" color="primary" size="lg">
+        Create new campaign
+      </UButton>
+    </section>
+
+    <div v-if="pending" class="grid gap-4 md:grid-cols-4">
+      <USkeleton v-for="index in 4" :key="index" class="h-32 w-full" />
+    </div>
+
+    <div v-else class="space-y-8">
+      <section class="grid gap-4 md:grid-cols-4">
+        <UCard v-for="card in summaryCards" :key="card.label" class="border border-white/10 bg-white/5">
+          <div class="space-y-3">
+            <p class="text-sm text-zinc-400">{{ card.label }}</p>
+            <p class="text-3xl font-semibold text-white">{{ card.value }}</p>
+            <p class="text-xs text-emerald-400">{{ card.detail }}</p>
+          </div>
+        </UCard>
+      </section>
+
+      <section class="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
+        <UCard class="border border-white/10 bg-white/5">
+          <template #header>
+            <div class="flex items-center justify-between">
+              <h2 class="text-lg font-semibold text-white">Weekly output</h2>
+              <span class="text-xs uppercase tracking-[0.2em] text-zinc-400">Last 7 days</span>
+            </div>
+          </template>
+
+          <div class="mt-6 flex h-44 items-end gap-3">
+            <div v-for="(value, index) in trendBars" :key="index" class="flex flex-1 flex-col items-center justify-end gap-2">
+              <span class="text-[10px] text-zinc-500">{{ index + 1 }}</span>
+              <div
+                class="w-full rounded-t-xl bg-gradient-to-t from-indigo-500 to-violet-400"
+                :style="{ height: `${value}%` }"
+              />
+            </div>
+          </div>
+        </UCard>
+
+        <UCard class="border border-white/10 bg-white/5">
+          <template #header>
+            <h2 class="text-lg font-semibold text-white">AI notes</h2>
+          </template>
+
+          <div class="space-y-4 text-sm text-zinc-300">
+            <div class="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-3">
+              <p class="font-medium text-emerald-300">Hook quality</p>
+              <p class="mt-1">Strong 3-second opener with concise offers and product proof.</p>
+            </div>
+            <div class="rounded-2xl border border-indigo-500/30 bg-indigo-500/10 p-3">
+              <p class="font-medium text-indigo-300">CTA performance</p>
+              <p class="mt-1">Offer-led CTA drives 28% higher click-through than generic product CTAs.</p>
+            </div>
+          </div>
+        </UCard>
+      </section>
+
+      <UCard class="border border-white/10 bg-white/5">
+        <template #header>
           <div class="flex items-center justify-between">
+            <h2 class="text-lg font-semibold text-white">Recent videos</h2>
+            <UButton to="/history" variant="ghost" color="neutral" size="sm">View library</UButton>
+          </div>
+        </template>
+
+        <div class="space-y-3">
+          <div
+            v-for="video in overview?.recentVideos ?? []"
+            :key="video.id"
+            class="flex flex-col gap-3 rounded-2xl border border-white/10 bg-zinc-900/70 p-4 md:flex-row md:items-center md:justify-between"
+          >
             <div>
-              <p class="text-sm font-semibold text-primary">Product sprint board</p>
-              <p class="text-sm text-muted">Designed for fast ideation, demos, and iteration.</p>
+              <p class="text-base font-medium text-white">{{ video.title }}</p>
+              <div class="mt-1 flex flex-wrap gap-2 text-xs text-zinc-400">
+                <span>{{ video.channel }}</span>
+                <span>•</span>
+                <span>{{ video.status }}</span>
+              </div>
             </div>
-            <UBadge color="success" variant="subtle">Live demo ready</UBadge>
-          </div>
 
-          <div class="grid gap-3 sm:grid-cols-2">
-            <div class="rounded-2xl border border-primary/20 bg-primary/10 p-3">
-              <p class="text-2xl font-semibold text-primary">4x</p>
-              <p class="text-sm text-muted">Faster setup for landing + dashboard</p>
-            </div>
-            <div class="rounded-2xl border border-success/20 bg-success/10 p-3">
-              <p class="text-2xl font-semibold text-success">24/7</p>
-              <p class="text-sm text-muted">API skeletons and AI assistant preview</p>
-            </div>
-          </div>
-
-          <div class="rounded-2xl border border-default p-3">
-            <div class="flex items-center gap-2 text-sm font-medium">
-              <UIcon name="i-lucide-sparkles" class="text-primary" />
-              <span>Mock analytics and AI assistant shell included</span>
+            <div class="flex items-center gap-8 text-sm text-zinc-300">
+              <div>
+                <p class="text-zinc-400">Pulls</p>
+                <p class="font-medium text-white">{{ video.pulls }}</p>
+              </div>
+              <div>
+                <p class="text-zinc-400">Watch</p>
+                <p class="font-medium text-white">{{ video.watchTime }}</p>
+              </div>
             </div>
           </div>
         </div>
-      </div>
-    </UPageHero>
-
-    <UPageSection
-      id="features"
-      headline="What you get"
-      title="Everything you need to go from idea to prototype fast"
-      description="This starter removes the boilerplate so your team can focus on product value, not setup."
-      :features="features"
-    />
-
-    <UPageSection
-      id="workflow"
-      headline="Fast workflow"
-      title="Three steps to your first demo"
-      description="Use the same structure for a hackathon pitch, an internal prototype, or a first customer preview."
-    >
-      <div class="grid gap-4 md:grid-cols-3">
-        <UCard v-for="(item, index) in workflow" :key="item.title" class="h-full">
-          <div class="flex items-center gap-3">
-            <div class="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
-              {{ index + 1 }}
-            </div>
-            <h3 class="font-semibold">{{ item.title }}</h3>
-          </div>
-          <p class="mt-3 text-sm text-muted">{{ item.description }}</p>
-        </UCard>
-      </div>
-    </UPageSection>
-
-    <UPageSection
-      headline="Starter stack"
-      title="Modern stack that removes setup friction"
-      description="Nuxt 4, Nuxt UI, and ready-made API routes keep the experience consistent from design to deployment."
-    >
-      <div class="grid gap-4 md:grid-cols-3">
-        <UCard v-for="item in stack" :key="item.title" class="h-full">
-          <h3 class="font-semibold">{{ item.title }}</h3>
-          <p class="mt-2 text-sm text-muted">{{ item.description }}</p>
-        </UCard>
-      </div>
-    </UPageSection>
-
-    <UPageCTA
-      title="Ready to build?"
-      description="Clone the repo, customize the copy, and launch your first AI hackathon prototype in minutes."
-      :links="[
-        { label: 'Open demo', to: '/demo', icon: 'i-lucide-play' },
-        { label: 'View starter API', to: '/', color: 'neutral' as const, variant: 'subtle' as const, trailingIcon: 'i-lucide-arrow-right' }
-      ]"
-    />
+      </UCard>
+    </div>
   </div>
 </template>

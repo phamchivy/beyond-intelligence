@@ -1,6 +1,11 @@
 <script setup>
+const title = 'Beyond Intelligence'
+const description = 'AI Short Video Ads Generator workspace for product storytelling, rendering, and campaign analytics'
+
 useHead({
+  titleTemplate: '%s',
   meta: [
+    { name: 'description', content: description },
     { name: 'viewport', content: 'width=device-width, initial-scale=1' }
   ],
   link: [
@@ -10,9 +15,6 @@ useHead({
     lang: 'en'
   }
 })
-
-const title = 'Nuxt Boilerplate'
-const description = 'A production-ready starter template powered by Nuxt UI. Build beautiful, accessible, and performant applications in minutes, not hours.'
 
 useSeoMeta({
   title,
