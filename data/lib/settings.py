@@ -30,17 +30,20 @@ class StorageSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="STORAGE_", env_file=".env", extra="ignore")
 
     url: str = "s3://bi-data-dev"
-    # Empty means "real AWS, let boto resolve it" -- MinIO is the only
-    # target that needs a fixed local URL.
-    endpoint_url: str = "http://localhost:9000"
-    access_key: str = "minio"
-    secret_key: str = "minio123"
+    # Empty means "real AWS, let boto resolve it" -- only a local
+    # S3-compatible emulator needs a fixed endpoint URL here.
+    endpoint_url: str = ""
+    access_key: str = ""
+    secret_key: str = ""
     region: str = "us-east-1"
     addressing_style: str = "auto"
 
     @property
     def is_local(self) -> bool:
-        """True for a fixed local endpoint (MinIO); false for real AWS S3."""
+        """True when a custom endpoint is set (a local S3-compatible emulator).
+
+        False for real AWS S3.
+        """
         return bool(self.endpoint_url)
 
     @property
@@ -77,10 +80,11 @@ class StorageSettings(BaseSettings):
     def storage_options(self) -> dict[str, str]:
         """The credential dict every delta-rs and DuckDB S3 call needs.
 
-        ``AWS_ALLOW_HTTP`` and ``AWS_S3_ALLOW_UNSAFE_RENAME`` are MinIO
-        compatibility flags -- real S3 supports proper conditional PUTs
-        and must not fall back to the unsafe rename path, so both are
-        scoped to ``is_local`` rather than sent unconditionally.
+        ``AWS_ALLOW_HTTP`` and ``AWS_S3_ALLOW_UNSAFE_RENAME`` are local
+        S3-compatible emulator compatibility flags -- real S3 supports
+        proper conditional PUTs and must not fall back to the unsafe
+        rename path, so both are scoped to ``is_local`` rather than sent
+        unconditionally.
         """
         options = {
             "AWS_REGION": self.region,

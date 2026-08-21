@@ -1,4 +1,4 @@
-"""Integration test proving Landing/Bronze append-only semantics -- needs MinIO running."""
+"""Integration test proving Landing/Bronze append-only semantics -- needs object storage."""
 
 import pyarrow as pa
 import pytest

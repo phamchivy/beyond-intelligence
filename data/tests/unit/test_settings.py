@@ -14,7 +14,7 @@ def test_layer_urls_derive_from_storage_url() -> None:
 
 
 def test_storage_options_contains_credentials_and_the_local_endpoint() -> None:
-    """A local endpoint (MinIO) adds AWS_ENDPOINT_URL and the unsafe-rename flag."""
+    """A local S3-compatible endpoint adds AWS_ENDPOINT_URL and the unsafe-rename flag."""
     s = Settings(storage={"endpoint_url": "http://localhost:9000"})
     options = s.storage.storage_options
     assert options["AWS_ACCESS_KEY_ID"] == s.storage.access_key
@@ -25,7 +25,7 @@ def test_storage_options_contains_credentials_and_the_local_endpoint() -> None:
 
 def test_storage_options_omits_endpoint_for_real_s3() -> None:
     """An empty endpoint_url (real AWS S3) must not send AWS_ENDPOINT_URL or the
-    MinIO-only unsafe-rename flag -- real S3 does proper conditional PUTs."""
+    local-emulator-only unsafe-rename flag -- real S3 does proper conditional PUTs."""
     s = Settings(storage={"endpoint_url": "", "region": "ap-southeast-1"})
     options = s.storage.storage_options
     assert "AWS_ENDPOINT_URL" not in options

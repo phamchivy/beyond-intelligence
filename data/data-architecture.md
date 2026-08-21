@@ -221,7 +221,7 @@ so the caller can validate before or after the write (§8).
 | Not abstracted | Because |
 | --- | --- |
 | dlt sources | dlt *is* the source abstraction. A `Source` port over it is a wrapper over a wrapper. |
-| Object storage | fsspec and delta-rs already make local, MinIO, S3, R2 and GCS the same URL. |
+| Object storage | fsspec and delta-rs already make S3, R2 and GCS the same URL. |
 | Postgres access | A handful of queries. `psycopg` in `lib/db.py`, called directly. |
 | Polars / DuckDB | Compute engines are not I/O. There is nothing to fake. |
 | The SQL files | They are SQL. DuckDB runs them; Dagster orders them. |
@@ -336,7 +336,7 @@ rebuilding from Silver must always be safe. Nothing may live only in the index.
 | SQL transformation | DuckDB, over `.sql` files in `sql/transforms/` | §6 |
 | Python transformation and validation | Polars | §6.5, §6.6, §8 |
 | Contracts | Pandera, plus Delta schema enforcement | §8 |
-| Object storage | MinIO local, S3 / R2 / GCS cloud | §3 |
+| Object storage | S3 (R2 / GCS also fsspec-compatible) | §3 |
 | Serving store | Postgres 16 + pgvector + pg_trgm + unaccent | §9, §10 |
 | Serving API | FastAPI + uvicorn on `:8002` | §9 |
 | Document parsing | Docling, `pymupdf4llm` as a fast path | §6.5 |
@@ -360,7 +360,7 @@ and nothing in this layer runs on a JVM.
 │  Developer laptop                                            │
 │                                                              │
 │  ┌────────────────┐        ┌──────────────────────────────┐  │
-│  │  dagster dev   │───────▶│  MinIO                       │  │
+│  │  dagster dev   │───────▶│  S3                          │  │
 │  │  assets +      │        │  landing/ bronze/ silver/    │  │
 │  │  schedules     │        │  gold/ quarantine/  (Delta)  │  │
 │  └───────┬────────┘        └──────────────┬───────────────┘  │
@@ -381,8 +381,9 @@ and nothing in this layer runs on a JVM.
       agent/ layer                     .NET 8 backend
 ```
 
-Two containers (MinIO, Postgres), two processes (`dagster dev`, `uvicorn`).
-DuckDB, Polars and delta-rs are libraries — nothing to run, nothing to keep alive.
+One container (Postgres), two processes (`dagster dev`, `uvicorn`) — object
+storage is S3 directly, not a local emulator. DuckDB, Polars and delta-rs are
+libraries — nothing to run, nothing to keep alive.
 
 **The upload directory is a shared volume, not an HTTP transfer.** The .NET
 backend writes uploaded media to `backend/wwwroot/uploads/videos/` and returns
@@ -394,7 +395,7 @@ contract in this document that shipped .NET code already depends on.
 
 | Local | Cloud | What changes |
 | --- | --- | --- |
-| MinIO on `:9000` | S3 / R2 / GCS | `OBJECT_STORE_URL`, credentials |
+| S3 | S3 / R2 / GCS | `STORAGE_URL`, credentials, region |
 | Postgres container | Neon / Supabase / RDS | `DATABASE_URL` |
 | DuckDB in-process | DuckDB in-process | nothing |
 | `dagster dev` | Dagster on a container | deployment manifest only |
@@ -455,7 +456,7 @@ data/
 ├── prompts/                    # the caption instruction
 └── tests/
     ├── unit/                   # no container, no network
-    ├── integration/            # real Postgres, MinIO, ffmpeg
+    ├── integration/            # real Postgres, S3, ffmpeg
     └── fixtures/
 ```
 
@@ -1128,7 +1129,7 @@ random id would silently admit.
 ```text
 tests/
 ├── unit/          no container, no network, no API key. Milliseconds.
-├── integration/   real Postgres, real MinIO, real ffmpeg, a real API key
+├── integration/   real Postgres, real S3, real ffmpeg, a real API key
 └── fixtures/
 ```
 

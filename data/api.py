@@ -67,7 +67,7 @@ async def handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
 def startup() -> None:
     """Apply the (idempotent) init SQL, then restore the index from its S3 snapshot.
 
-    Restore failure (no snapshot yet, S3/MinIO unreachable) must not block
+    Restore failure (no snapshot yet, S3 unreachable) must not block
     startup -- the API is still usable against whatever Postgres already
     has, the same tolerance `/health` gives a database blip.
     """
