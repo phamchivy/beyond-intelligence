@@ -86,6 +86,11 @@ class LLMProvider(str, Enum):
     MOCK = "mock"  # dung cho test/dev khong can goi API that
 
 
+class VideoProvider(str, Enum):
+    SEEDANCE = "seedance"
+    MOCK = "mock"  # dung cho test/dev khong can goi API that
+
+
 class LogLevel(str, Enum):
     DEBUG = "DEBUG"
     INFO = "INFO"
@@ -162,7 +167,7 @@ class VideoRendererSettings(_BaseAppSettings):
 
     model_config = SettingsConfigDict(env_prefix="VIDEO_")
 
-    provider: str = "seedance"
+    provider: VideoProvider = VideoProvider.SEEDANCE
     # Da xac nhan tu tai lieu "Danh sach mo hinh API ho tro" (BytePlus)
     # nguoi dung cung cap -- khong con la doan nua, dat lam default.
     model: str = "dreamina-seedance-2-0-260128"

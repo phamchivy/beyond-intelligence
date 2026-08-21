@@ -3,6 +3,9 @@ Vi tri file nay: agent/tests/unit/application/services/test_storyboard_session_s
 
 Unit test cho StoryboardSessionService -- toan bo dung MockLLM,
 MockVideoRenderer, InMemoryMemory, khong goi mang.
+
+Xac nhan dung luong da chot: revise CHI sua text (KHONG render), chi
+render_final() moi goi VideoRenderer, va CHI DUNG MOT LAN.
 """
 from __future__ import annotations
 
@@ -33,7 +36,7 @@ _SAMPLE_BRIEF = {"name": "Giay the thao ABC", "category": "footwear", "usp": "nh
 
 
 class TestStartSession:
-    async def test_returns_storyboard_and_render_job(self) -> None:
+    async def test_returns_storyboard_text_only(self) -> None:
         service = _make_service()
 
         result = await service.start_session("task-1", _SAMPLE_BRIEF)
@@ -41,20 +44,18 @@ class TestStartSession:
         assert result.task_id == "task-1"
         assert result.revision_number == 1
         assert result.storyboard_text != ""
-        assert result.render_job.status == RenderJobStatus.QUEUED
 
-    async def test_passes_reference_images_to_renderer(self) -> None:
+    async def test_does_not_call_video_renderer(self) -> None:
         renderer = MockVideoRenderer()
         service = StoryboardSessionService(
             llm=MockLLM(fixed_response="storyboard text"),
             video_renderer=renderer,
             memory=InMemoryMemory(),
         )
-        images = (ReferenceImage(image_bytes=b"fake-product-photo", role="product"),)
 
-        await service.start_session("task-1", _SAMPLE_BRIEF, reference_images=images)
+        await service.start_session("task-1", _SAMPLE_BRIEF)
 
-        assert renderer.submit_call_count == 1
+        assert renderer.submit_call_count == 0  # dung luong moi: khong render luc sinh storyboard
 
 
 class TestReviseSession:
@@ -75,6 +76,20 @@ class TestReviseSession:
         assert second.revision_number == 2
         assert second.storyboard_text == "storyboard da sua theo feedback"
 
+    async def test_revise_does_not_call_video_renderer(self) -> None:
+        renderer = MockVideoRenderer()
+        llm = MockLLM(
+            response_queue=[LLMResponse(content="v1"), LLMResponse(content="v2")]
+        )
+        service = StoryboardSessionService(
+            llm=llm, video_renderer=renderer, memory=InMemoryMemory(), max_revisions=5
+        )
+
+        await service.start_session("task-1", _SAMPLE_BRIEF)
+        await service.revise_session("task-1", feedback="sua lai")
+
+        assert renderer.submit_call_count == 0  # dung luong moi: revise KHONG render
+
     async def test_revise_without_start_raises_session_not_found(self) -> None:
         service = _make_service()
 
@@ -91,10 +106,12 @@ class TestReviseSession:
         with pytest.raises(MaxRevisionsExceededError):
             await service.revise_session("task-1", feedback="sua lan 2")  # vuot qua max
 
-    async def test_each_revision_triggers_new_render(self) -> None:
+
+class TestRenderFinal:
+    async def test_renders_using_latest_revision_text(self) -> None:
         renderer = MockVideoRenderer()
         llm = MockLLM(
-            response_queue=[LLMResponse(content="v1"), LLMResponse(content="v2")]
+            response_queue=[LLMResponse(content="v1"), LLMResponse(content="v2 da duyet")]
         )
         service = StoryboardSessionService(
             llm=llm, video_renderer=renderer, memory=InMemoryMemory(), max_revisions=5
@@ -103,7 +120,30 @@ class TestReviseSession:
         await service.start_session("task-1", _SAMPLE_BRIEF)
         await service.revise_session("task-1", feedback="sua lai")
 
-        assert renderer.submit_call_count == 2  # moi revision deu render, dung quyet dinh da chot
+        render_job = await service.render_final("task-1")
+
+        assert renderer.submit_call_count == 1  # CHI goi render dung 1 lan, luc approve
+        assert render_job.status == RenderJobStatus.QUEUED
+
+    async def test_render_final_without_session_raises(self) -> None:
+        service = _make_service()
+
+        with pytest.raises(SessionNotFoundError):
+            await service.render_final("task-khong-ton-tai")
+
+    async def test_render_final_passes_reference_images(self) -> None:
+        renderer = MockVideoRenderer()
+        service = StoryboardSessionService(
+            llm=MockLLM(fixed_response="storyboard"),
+            video_renderer=renderer,
+            memory=InMemoryMemory(),
+        )
+        images = (ReferenceImage(image_bytes=b"fake-product-photo", role="product"),)
+
+        await service.start_session("task-1", _SAMPLE_BRIEF, reference_images=images)
+        await service.render_final("task-1")
+
+        assert renderer.submit_call_count == 1
 
 
 class TestFinalizeSession:

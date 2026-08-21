@@ -1,0 +1,15 @@
+# Vi tri file nay: agent/.dockerignore
+# Loai tru khoi Docker build context -- giam kich thuoc image, va QUAN
+# TRONG NHAT: khong bao gio bake .env that (co secret) vao image.
+
+.env
+.git
+.gitignore
+__pycache__/
+*.pyc
+.pytest_cache/
+agent_venv/
+.venv/
+venv/
+*.egg-info/
+.DS_Store
