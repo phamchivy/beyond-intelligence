@@ -132,7 +132,7 @@ def test_new_video_downloads_and_uploads_to_landing():
 def test_a_failed_download_does_not_abort_the_rest(monkeypatch: pytest.MonkeyPatch):
     _FakeYoutubeDL.fail_urls = {_ROW_A["url"]}
     monkeypatch.setattr(d, "top_videos", lambda keyword, **kw: [_ROW_A, _ROW_B])
-    monkeypatch.setattr(d, "_landing_fs", lambda: _FakeS3())
+    monkeypatch.setattr(d, "s3_filesystem", lambda: _FakeS3())
 
     results = d.download_top_videos("electric shaver", limit=2)
 
@@ -149,7 +149,7 @@ def test_download_top_videos_is_a_noop_when_nothing_ranked(monkeypatch: pytest.M
 
 def test_bronze_row_carries_the_kalodata_metrics_through(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(d, "top_videos", lambda keyword, **kw: [_ROW_A, _ROW_B])
-    monkeypatch.setattr(d, "_landing_fs", lambda: _FakeS3())
+    monkeypatch.setattr(d, "s3_filesystem", lambda: _FakeS3())
     results = d.download_top_videos("electric shaver", limit=2)
 
     captured: dict = {}

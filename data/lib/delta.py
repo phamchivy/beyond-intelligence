@@ -34,6 +34,32 @@ def storage_options() -> dict[str, str]:
     return settings.storage.storage_options
 
 
+def s3_filesystem():
+    """Build an s3fs filesystem handle against the configured storage.
+
+    Imported lazily -- s3fs pulls in aiobotocore, whose pinned botocore
+    range can drift from the one another dependency in this venv needs.
+    Importing it only when a real blob read/write is about to happen
+    keeps that fragility from blocking module import in unit tests, which
+    fake this out and never call it.
+
+    Returns:
+        An ``s3fs.S3FileSystem`` pointed at ``settings.storage``.
+    """
+    import s3fs
+
+    client_kwargs = {"region_name": settings.storage.region}
+    if settings.storage.is_local:
+        client_kwargs["endpoint_url"] = settings.storage.endpoint_url
+
+    return s3fs.S3FileSystem(
+        key=settings.storage.access_key,
+        secret=settings.storage.secret_key,
+        client_kwargs=client_kwargs,
+        config_kwargs={"s3": {"addressing_style": settings.storage.addressing_style}},
+    )
+
+
 def table_uri(layer: str, name: str) -> str:
     """Build a Delta table URI from its layer and name, never string concatenation.
 

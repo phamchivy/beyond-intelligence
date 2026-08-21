@@ -147,6 +147,22 @@ class KalodataSettings(BaseSettings):
     currency: str = "USD"
 
 
+class GeminiSettings(BaseSettings):
+    """Gemini video understanding -- the only model that reads the .mp4 directly.
+
+    ``prompt_version`` is part of the idempotency key the analyze script
+    checks against Silver, not metadata: change the prompt or the model
+    and old storyboards must not silently mix with new ones (architecture
+    doc §6.6).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="GEMINI_", env_file=".env", extra="ignore")
+
+    api_key: SecretStr = SecretStr("")
+    model: str = "gemini-3.6-flash"
+    prompt_version: str = "storyboard-v1"
+
+
 class ChunkSettings(BaseSettings):
     """Document chunking limits, used by the HybridChunker path."""
 
@@ -207,6 +223,7 @@ class Settings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     sources: SourceSettings = Field(default_factory=SourceSettings)
     kalodata: KalodataSettings = Field(default_factory=KalodataSettings)
+    gemini: GeminiSettings = Field(default_factory=GeminiSettings)
     chunk: ChunkSettings = Field(default_factory=ChunkSettings)
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
     quality: QualitySettings = Field(default_factory=QualitySettings)

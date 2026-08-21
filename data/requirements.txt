@@ -20,9 +20,10 @@ s3fs>=2026.7
 psycopg[binary]>=3.3
 pgvector>=0.5
 
-# documents + embeddings (no media: no ffmpeg, no google-genai)
+# documents + embeddings (no ffmpeg -- Gemini reads video natively, see lib/gemini.py)
 docling>=2.119
 fastembed>=0.8
+google-genai>=1.0
 
 # serving
 fastapi>=0.115

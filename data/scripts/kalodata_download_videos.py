@@ -34,7 +34,7 @@ import polars as pl
 import pyarrow as pa
 import yt_dlp
 
-from lib.delta import sha256_file, write_delta
+from lib.delta import s3_filesystem, sha256_file, write_delta
 from lib.logging import get_logger, log_event
 from lib.settings import settings
 from scripts.kalodata_top_videos import top_videos
@@ -84,33 +84,6 @@ class FetchResult:
     skipped: bool
 
 
-def _landing_fs():
-    """Build the S3 filesystem handle, same construction as defs/ingest.py.
-
-    Imported lazily -- s3fs pulls in aiobotocore, whose pinned botocore
-    range can drift from the one another dependency installed in this
-    venv (pre-existing, unrelated to this script -- defs/ingest.py hits
-    the same import failure). Importing it only when a real upload is
-    about to happen keeps that fragility from blocking module import in
-    unit tests, which never call this function.
-
-    Returns:
-        An ``s3fs.S3FileSystem`` pointed at the configured storage endpoint.
-    """
-    import s3fs
-
-    client_kwargs = {"region_name": settings.storage.region}
-    if settings.storage.is_local:
-        client_kwargs["endpoint_url"] = settings.storage.endpoint_url
-
-    return s3fs.S3FileSystem(
-        key=settings.storage.access_key,
-        secret=settings.storage.secret_key,
-        client_kwargs=client_kwargs,
-        config_kwargs={"s3": {"addressing_style": settings.storage.addressing_style}},
-    )
-
-
 def _day_prefix(category_name: str, product_name: str, date_str: str) -> str:
     """Return the day-partitioned Landing prefix for one category/product.
 
@@ -158,7 +131,7 @@ def _download_one(fs, row: dict, keyword: str, prefix: str, timestamp: str) -> F
 
     Args:
         fs: An open ``s3fs.S3FileSystem`` handle (untyped here -- s3fs is
-            imported lazily, see :func:`_landing_fs`).
+            see :func:`lib.delta.s3_filesystem`).
         row: One row from :func:`scripts.kalodata_top_videos.top_videos`.
         keyword: The product keyword this run was searched under.
         prefix: This run's day prefix, from :func:`_day_prefix`.
@@ -249,7 +222,7 @@ def download_top_videos(
     prefix = _day_prefix(rows[0]["category_name"], rows[0]["product_name"], date_str)
     timestamp = now.strftime("%Y%m%dT%H%M%SZ")
 
-    fs = _landing_fs()
+    fs = s3_filesystem()
     return [_download_one(fs, row, keyword, prefix, timestamp) for row in rows]
 
 
