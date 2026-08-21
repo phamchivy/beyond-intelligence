@@ -1,5 +1,13 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Net.Http;
 using System.Net.Http.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using AIHackathonApi.Models.DTOs;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 
 namespace AIHackathonApi.Services;
 
@@ -81,9 +89,9 @@ public class DataPodClient : IDataPodClient
 public interface IAgentPodClient
 {
     Task<AgentStoryboardResponse> GenerateStoryboardAsync(AgentStoryboardRequest req, CancellationToken ct);
-    Task<AgentStoryboardResponse> RegenerateStoryboardAsync(Guid taskId, string feedback, CancellationToken ct);
-    Task<AgentRenderTriggerResponse> TriggerRenderAsync(Guid taskId, Guid storyboardId, CancellationToken ct);
-    Task<AgentRenderStatusResponse> GetRenderStatusAsync(string agentJobId, CancellationToken ct);
+    Task<AgentStoryboardResponse> ReviseStoryboardAsync(Guid taskId, string feedback, CancellationToken ct);
+    Task<AgentRenderTriggerResponse> TriggerRenderAsync(Guid taskId, CancellationToken ct);
+    Task<AgentRenderStatusResponse> GetRenderStatusAsync(string jobId, CancellationToken ct);
 }
 
 public class AgentPodClient : IAgentPodClient
@@ -112,83 +120,83 @@ public class AgentPodClient : IAgentPodClient
             {
                 TaskId = req.TaskId,
                 RevisionNumber = 1,
-                Confidence = 0.88m,
-                ComplianceReport = new { passed = true, violations = Array.Empty<object>() },
-                StoryboardPlan = new
-                {
-                    hook = new { text = "Bí quyết chống ồn đỉnh cao cho cả ngày năng động!", duration_seconds = 3 },
-                    shots = new[]
-                    {
-                        new { order = 1, scene_description = "Cận cảnh sản phẩm sắc nét", motion = "zoom_in", overlay_text = "Chống ồn ANC 35dB", duration_seconds = 4, reference_asset_role = "hero" },
-                        new { order = 2, scene_description = "Trải nghiệm nghe nhạc ngoài phố", motion = "pan_right", overlay_text = "Pin bền 30 giờ", duration_seconds = 4, reference_asset_role = "hero" }
-                    },
-                    cta = new { text = "Mua ngay hôm nay - Giảm 30%", duration_seconds = 2 }
-                }
+                StoryboardText = "Hook: Bí quyết chống ồn đỉnh cao cho cả ngày năng động!\nScene 1: Cận cảnh sản phẩm ANC 35dB\nScene 2: Trải nghiệm nghe nhạc ngoài phố với pin 30 giờ\nCTA: Mua ngay hôm nay - Giảm 30%!"
             };
         }
     }
 
-    public async Task<AgentStoryboardResponse> RegenerateStoryboardAsync(Guid taskId, string feedback, CancellationToken ct)
+    public async Task<AgentStoryboardResponse> ReviseStoryboardAsync(Guid taskId, string feedback, CancellationToken ct)
     {
         try
         {
-            var res = await _http.PostAsJsonAsync("/agent/reasoning/storyboard/regenerate", new { task_id = taskId, feedback }, ct);
+            var payload = new AgentReviseStoryboardRequest
+            {
+                TaskId = taskId.ToString(),
+                Feedback = feedback
+            };
+            var res = await _http.PostAsJsonAsync("/agent/reasoning/storyboard/revise", payload, ct);
             res.EnsureSuccessStatusCode();
             return (await res.Content.ReadFromJsonAsync<AgentStoryboardResponse>(cancellationToken: ct))!;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Agent Pod Regenerate chưa sẵn sàng, kích hoạt Mock Revision.");
+            _logger.LogWarning(ex, "Agent Pod Revise chưa sẵn sàng, kích hoạt Mock Revision.");
             return new AgentStoryboardResponse
             {
-                TaskId = taskId,
+                TaskId = taskId.ToString(),
                 RevisionNumber = 2,
-                Confidence = 0.92m,
-                ComplianceReport = new { passed = true, violations = Array.Empty<object>() },
-                StoryboardPlan = new
-                {
-                    hook = new { text = $"[Đã cập nhật theo góp ý: {feedback}] Âm thanh đỉnh chóp!", duration_seconds = 3 },
-                    shots = new[]
-                    {
-                        new { order = 1, scene_description = "Cận cảnh vỏ hộp và tai nghe", motion = "zoom_in", overlay_text = "Thiết kế cao cấp", duration_seconds = 5, reference_asset_role = "hero" }
-                    },
-                    cta = new { text = "Sở hữu ngay", duration_seconds = 2 }
-                }
+                StoryboardText = $"[Đã cập nhật theo góp ý: {feedback}]\nHook: Âm thanh đỉnh cao cùng thiết kế thời thượng!\nScene: Cận cảnh hộp tai nghe cao cấp\nCTA: Sở hữu ngay!"
             };
         }
     }
 
-    public async Task<AgentRenderTriggerResponse> TriggerRenderAsync(Guid taskId, Guid storyboardId, CancellationToken ct)
+    public async Task<AgentRenderTriggerResponse> TriggerRenderAsync(Guid taskId, CancellationToken ct)
     {
         try
         {
-            var res = await _http.PostAsJsonAsync("/agent/render", new { task_id = taskId, storyboard_id = storyboardId }, ct);
+            var payload = new AgentRenderTriggerRequest
+            {
+                TaskId = taskId.ToString()
+            };
+            var res = await _http.PostAsJsonAsync("/agent/render", payload, ct);
             res.EnsureSuccessStatusCode();
             return (await res.Content.ReadFromJsonAsync<AgentRenderTriggerResponse>(cancellationToken: ct))!;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Agent Render chưa sẵn sàng, kích hoạt Mock Job ID.");
-            return new AgentRenderTriggerResponse { RenderJobId = Guid.NewGuid().ToString() };
+            return new AgentRenderTriggerResponse
+            {
+                RenderJobId = Guid.NewGuid().ToString(),
+                Status = "queued"
+            };
         }
     }
 
-    public async Task<AgentRenderStatusResponse> GetRenderStatusAsync(string agentJobId, CancellationToken ct)
+    public async Task<AgentRenderStatusResponse> GetRenderStatusAsync(string jobId, CancellationToken ct)
     {
-        try
+        using var response = await _http.GetAsync($"/agent/render/{jobId}", ct);
+
+        if (!response.IsSuccessStatusCode)
         {
-            return (await _http.GetFromJsonAsync<AgentRenderStatusResponse>($"/agent/render/{agentJobId}/status", ct))!;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Agent Render Status chưa sẵn sàng, giả lập render completed.");
+            var errorDetail = await response.Content.ReadAsStringAsync(ct);
+            _logger.LogError("Agent Pod trả về lỗi {StatusCode}: {ErrorDetail}", response.StatusCode, errorDetail);
+
             return new AgentRenderStatusResponse
             {
-                RenderJobId = agentJobId,
-                Status = "completed",
-                VideoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-                QaReport = new { product_match_score = 0.95, issues = Array.Empty<string>() }
+                RenderJobId = jobId,
+                Status = "failed",
+                Error = $"Agent Pod Error ({(int)response.StatusCode}): {errorDetail}"
             };
         }
+
+        var result = await response.Content.ReadFromJsonAsync<AgentRenderStatusResponse>(cancellationToken: ct);
+        
+        return result ?? new AgentRenderStatusResponse
+        {
+            RenderJobId = jobId,
+            Status = "failed",
+            Error = "Dữ liệu trả về từ Agent Pod rỗng."
+        };
     }
 }

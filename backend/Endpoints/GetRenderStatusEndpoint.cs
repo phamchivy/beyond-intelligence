@@ -39,8 +39,17 @@ public class GetRenderStatusEndpoint : EndpointWithoutRequest
         await using var conn = new NpgsqlConnection(_config.GetConnectionString("DefaultConnection"));
         await conn.OpenAsync(ct);
 
-        var job = await conn.QuerySingleOrDefaultAsync<dynamic>(
-            "SELECT * FROM render_jobs WHERE id = @Id", new { Id = renderJobId });
+        const string selectJobSql = @"
+            SELECT 
+                id, 
+                task_id, 
+                agent_job_id, 
+                status, 
+                temp_video_url
+            FROM render_jobs 
+            WHERE id = @Id;";
+
+        var job = await conn.QuerySingleOrDefaultAsync<RenderJobRecord>(selectJobSql, new { Id = renderJobId });
 
         if (job == null)
         {
@@ -49,27 +58,25 @@ public class GetRenderStatusEndpoint : EndpointWithoutRequest
             return;
         }
 
-        // Trường hợp đã hoàn tất trước đó
-        if (job.status == "completed")
+        // 1. Trường hợp đã hoàn tất trước đó
+        if (job.status == "completed" && !string.IsNullOrEmpty(job.temp_video_url))
         {
             var cachedRes = new
             {
                 status = "completed",
-                video_url = (string)job.temp_video_url,
-                qa_report = job.qa_report
+                video_url = job.temp_video_url
             };
             await HttpContext.Response.WriteAsJsonAsync(cachedRes, cancellationToken: ct);
             return;
         }
 
-        // Gọi Agent Pod kiểm tra trạng thái mới nhất
-        var agentStatus = await _agentPod.GetRenderStatusAsync((string)job.agent_job_id, ct);
+        // 2. Gọi Agent Pod kiểm tra trạng thái mới nhất (/agent/render/{job_id})
+        var agentStatus = await _agentPod.GetRenderStatusAsync(job.agent_job_id, ct);
 
-        // Trường hợp Agent báo render thành công
+        // 3. Trường hợp Agent báo render thành công
         if (agentStatus.Status == "completed")
         {
-            // Báo Data Pod lưu video vĩnh viễn
-            var savedData = await _dataPod.SavePermanentVideoAsync((Guid)job.task_id, (string)job.agent_job_id, agentStatus.VideoUrl!, ct);
+            var savedData = await _dataPod.SavePermanentVideoAsync(job.task_id, job.agent_job_id, agentStatus.VideoUrl!, ct);
 
             // Cập nhật Postgres
             await conn.ExecuteAsync(@"
@@ -77,42 +84,68 @@ public class GetRenderStatusEndpoint : EndpointWithoutRequest
                 SET status = 'completed', 
                     temp_video_url = @FinalUrl, 
                     final_object_ref = @ObjectRef, 
-                    qa_report = @QaReport::jsonb, 
                     completed_at = now() 
                 WHERE id = @Id;
-                UPDATE tasks SET status = 'completed' WHERE id = @TaskId;", new
+                
+                UPDATE tasks 
+                SET status = 'completed', 
+                    updated_at = now() 
+                WHERE id = @TaskId;", new
             {
                 Id = renderJobId,
-                job.task_id,
-                savedData.FinalUrl,
-                savedData.ObjectRef,
-                QaReport = JsonSerializer.Serialize(agentStatus.QaReport)
+                TaskId = job.task_id,
+                FinalUrl = savedData.FinalUrl,
+                ObjectRef = savedData.ObjectRef
             });
 
             var completedRes = new
             {
                 status = "completed",
-                video_url = savedData.FinalUrl,
-                qa_report = agentStatus.QaReport
+                video_url = savedData.FinalUrl
             };
             await HttpContext.Response.WriteAsJsonAsync(completedRes, cancellationToken: ct);
             return;
         }
 
-        // Trường hợp Agent báo render thất bại
+        // 4. Trường hợp Agent báo render thất bại
         if (agentStatus.Status == "failed")
         {
             await conn.ExecuteAsync(@"
-                UPDATE render_jobs SET status = 'failed' WHERE id = @Id;
-                UPDATE tasks SET status = 'failed' WHERE id = @TaskId;", new { Id = renderJobId, job.task_id });
+                UPDATE render_jobs 
+                SET status = 'failed',
+                    error_message = @ErrorMsg
+                WHERE id = @Id;
+                
+                UPDATE tasks 
+                SET status = 'failed',
+                    updated_at = now() 
+                WHERE id = @TaskId;", new 
+            { 
+                Id = renderJobId, 
+                TaskId = job.task_id,
+                ErrorMsg = agentStatus.Error != null ? JsonSerializer.Serialize(agentStatus.Error) : null
+            });
 
-            var failedRes = new { status = "failed" };
+            var failedRes = new 
+            { 
+                status = "failed",
+                error = agentStatus.Error
+            };
             await HttpContext.Response.WriteAsJsonAsync(failedRes, cancellationToken: ct);
             return;
         }
 
-        // Trường hợp đang xử lý (queued / processing)
-        var processingRes = new { status = (string)agentStatus.Status };
+        // 5. Trường hợp đang xử lý (queued / processing)
+        var processingRes = new { status = agentStatus.Status };
         await HttpContext.Response.WriteAsJsonAsync(processingRes, cancellationToken: ct);
+    }
+
+    private sealed class RenderJobRecord
+    {
+        public Guid id { get; set; }
+        public Guid task_id { get; set; }
+        public string agent_job_id { get; set; } = string.Empty;
+        public string status { get; set; } = string.Empty;
+        public string? temp_video_url { get; set; }
     }
 }

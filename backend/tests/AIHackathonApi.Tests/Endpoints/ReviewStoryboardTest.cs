@@ -48,17 +48,21 @@ public class ReviewStoryboardEndpointTests
     public async Task AgentPod_TriggerRender_ShouldReturnValidJobId()
     {
         var taskId = Guid.NewGuid();
-        var storyboardId = Guid.NewGuid();
         var expectedJobId = Guid.NewGuid().ToString();
 
         _mockAgentPod
-            .Setup(x => x.TriggerRenderAsync(taskId, storyboardId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new AgentRenderTriggerResponse { RenderJobId = expectedJobId });
+            .Setup(x => x.TriggerRenderAsync(taskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentRenderTriggerResponse 
+            { 
+                RenderJobId = expectedJobId,
+                Status = "queued"
+            });
 
-        var result = await _mockAgentPod.Object.TriggerRenderAsync(taskId, storyboardId, CancellationToken.None);
+        var result = await _mockAgentPod.Object.TriggerRenderAsync(taskId, CancellationToken.None);
 
         result.Should().NotBeNull();
         result.RenderJobId.Should().Be(expectedJobId);
+        result.Status.Should().Be("queued");
     }
 
     [Fact]
@@ -75,32 +79,25 @@ public class ReviewStoryboardEndpointTests
     }
 
     [Fact]
-    public async Task AgentPod_RegenerateStoryboard_ShouldIncrementRevisionNumber()
+    public async Task AgentPod_ReviseStoryboard_ShouldIncrementRevisionNumber()
     {
         var taskId = Guid.NewGuid();
         var feedback = "Cần tăng nhịp điệu nhanh hơn ở phần hook";
 
         _mockAgentPod
-            .Setup(x => x.RegenerateStoryboardAsync(taskId, feedback, It.IsAny<CancellationToken>()))
+            .Setup(x => x.ReviseStoryboardAsync(taskId, feedback, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentStoryboardResponse
             {
-                TaskId = taskId,
+                TaskId = taskId.ToString(),
                 RevisionNumber = 2,
-                Confidence = 0.95m,
-                ComplianceReport = new { passed = true, violations = Array.Empty<object>() },
-                StoryboardPlan = new
-                {
-                    hook = new { text = "Mở đầu sôi động!", duration_seconds = 3 },
-                    shots = Array.Empty<object>(),
-                    cta = new { text = "Mua ngay", duration_seconds = 2 }
-                }
+                StoryboardText = "Hook: Mở đầu sôi động!\nScene 1: Cận cảnh sản phẩm\nCTA: Mua ngay"
             });
 
-        var res = await _mockAgentPod.Object.RegenerateStoryboardAsync(taskId, feedback, CancellationToken.None);
+        var res = await _mockAgentPod.Object.ReviseStoryboardAsync(taskId, feedback, CancellationToken.None);
 
         res.Should().NotBeNull();
         res.RevisionNumber.Should().Be(2);
-        res.Confidence.Should().BeGreaterThan(0.9m);
+        res.StoryboardText.Should().Contain("Mở đầu sôi động");
     }
 
     [Fact]

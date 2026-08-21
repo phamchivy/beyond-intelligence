@@ -19,14 +19,14 @@ builder.Services.SwaggerDocument(o =>
 // 2. Cấu hình giới hạn dung lượng Upload (150MB)
 builder.WebHost.ConfigureKestrel(options =>
 {
-    options.Limits.MaxRequestBodySize = 150 * 1024 * 1024; // 150 MB
+    options.Limits.MaxRequestBodySize = 150 * 1024 * 1024;
 });
 builder.Services.Configure<FormOptions>(options =>
 {
     options.MultipartBodyLengthLimit = 150 * 1024 * 1024;
 });
 
-// 3. CORS cho NuxtJS Frontend
+// 3. CORS cho Frontend
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
@@ -37,30 +37,41 @@ builder.Services.AddCors(options =>
     });
 });
 
-// 4. Cấu hình HttpClients kết nối sang Data Pod & Agent Pod
-builder.Services.AddHttpClient("DataPod", client =>
-{
-    client.BaseAddress = new Uri(builder.Configuration["Services:DataPodUrl"] ?? "http://data:8001");
-    client.Timeout = TimeSpan.FromSeconds(30);
-});
-
+// 4. Cấu hình HttpClients kết nối sang Agent Pod (Port 8001) & Data Pod (Port 8002)
 builder.Services.AddHttpClient("AgentPod", client =>
 {
-    client.BaseAddress = new Uri(builder.Configuration["Services:AgentPodUrl"] ?? "http://agent:8002");
-    client.Timeout = TimeSpan.FromSeconds(60); // Đồng bộ reasoning có thể mất 5-15s
+    var url = builder.Configuration["Services:AgentPodUrl"] ?? "http://ai:8001";
+    client.BaseAddress = new Uri(url);
+    client.Timeout = TimeSpan.FromSeconds(60);
 });
 
-// 5. Đăng ký Services DI
+builder.Services.AddHttpClient("DataPod", client =>
+{
+    var url = builder.Configuration["Services:DataPodUrl"] ?? "http://data:8002";
+    client.BaseAddress = new Uri(url);
+    client.Timeout = TimeSpan.FromSeconds(60);
+});
+
+// 5. Đăng ký Services Dependency Injection
 builder.Services.AddScoped<IDataPodService, DataPodService>();
 builder.Services.AddScoped<IS3StorageService, S3StorageService>();
-builder.Services.AddScoped<IDataPodClient, DataPodClient>();
 builder.Services.AddScoped<IAgentPodClient, AgentPodClient>();
+builder.Services.AddScoped<IDataPodClient, DataPodClient>();
 
 var app = builder.Build();
 
+// 6. Middlewares & Routing
 app.UseCors("AllowFrontend");
 app.UseStaticFiles();
 app.UseFastEndpoints();
 app.UseSwaggerGen();
+
+// // 7. Health Check Endpoint
+// app.MapGet("/health", () => Results.Ok(new 
+// { 
+//     status = "ok", 
+//     service = "backend",
+//     timestamp = DateTime.UtcNow 
+// }));
 
 app.Run();

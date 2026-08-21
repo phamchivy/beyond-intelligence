@@ -53,7 +53,7 @@ public class GetRenderStatusEndpointTests
                 RenderJobId = agentJobId,
                 Status = "completed",
                 VideoUrl = tempUrl,
-                QaReport = new { product_match_score = 0.98, issues = Array.Empty<string>() }
+                Error = null
             });
 
         _mockDataPod
@@ -83,7 +83,8 @@ public class GetRenderStatusEndpointTests
             .ReturnsAsync(new AgentRenderStatusResponse
             {
                 RenderJobId = agentJobId,
-                Status = "failed"
+                Status = "failed",
+                Error = new { code = "RENDER_ERROR", message = "Video engine timeout" }
             });
 
         var agentStatus = await _mockAgentPod.Object.GetRenderStatusAsync(agentJobId, CancellationToken.None);
@@ -91,6 +92,7 @@ public class GetRenderStatusEndpointTests
         agentStatus.Should().NotBeNull();
         agentStatus.Status.Should().Be("failed");
         agentStatus.VideoUrl.Should().BeNull();
+        agentStatus.Error.Should().NotBeNull();
     }
 
     [Theory]
@@ -105,11 +107,13 @@ public class GetRenderStatusEndpointTests
             .ReturnsAsync(new AgentRenderStatusResponse
             {
                 RenderJobId = agentJobId,
-                Status = pendingStatus
+                Status = pendingStatus,
+                Error = null
             });
 
         var agentStatus = await _mockAgentPod.Object.GetRenderStatusAsync(agentJobId, CancellationToken.None);
 
         agentStatus.Status.Should().Be(pendingStatus);
+        agentStatus.VideoUrl.Should().BeNull();
     }
 }
