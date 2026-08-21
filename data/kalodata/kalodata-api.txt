@@ -1,0 +1,2411 @@
+Get video details
+Retrieve detailed information for a specific video
+
+Post
+https://www.kalodata.com/openapi/v1/tiktok/video/detail
+
+
+Integration Method
+All endpoints use HTTP POST + JSON with secret-key authentication in headers. Common fields: region / language / currency / date_range. You can use fixed request params below for local debugging and mock response preview.
+
+API Rate Limit
+Max
+100
+Requests /10 Second
+Request Parameters
+Field	Type	Description	Example	Required
+region	string	
+Data country code, e.g. US, BR, MX, ID, JP, MY, PH, SG, TH, VN, GB, ES, DE, FR, IT.
+
+US	Yes
+language	string	
+Language for text fields in the response. Currently supports zh-CN, en-US, id-ID, th-TH, vi-VN, es-ES, ja-JP, pt-BR, ko-KR, fr-FR.
+
+en-US	Yes
+currency	string	
+Currency unit for revenue and price fields. Currently supports CNY, USD, IDR, VND, THB, MYR, JPY, PHP, GBP, SGD, MXN, EUR, BRL.
+
+USD	Yes
+date_range	string	
+Date range. Accepts named ranges (lastDay, last7Day, last30Day, last60Day, last90Day, last180Day, last365Day), a natural date range in yyyy-MM-dd~yyyy-MM-dd form, or a natural month yyyy-MM. Some endpoints restrict this set — see the per-endpoint description.
+
+last7Day	Yes
+video_id	string	
+Video ID to query.
+
+7404191282148511007	Yes
+need_extra	boolean	
+Need Extra Info
+
+false	No
+Response Parameters
+Field	Type	Description	Example
+success	boolean	
+data	object	
+video_id	string	
+Video ID
+
+7627814494370057503
+video_region	string	
+Video country/region
+
+US
+video_title	string	
+Video title
+
+Product Review: Best Tech of 2024
+belonged_creator_id	string	
+Creator ID of the video
+
+7434060602055984170
+belonged_creator_handle	string	
+Creator handle of the video
+
+techreviewer
+product_number	integer	
+Number of products attached to the video
+
+5
+revenue	number	
+Revenue of the video within the selected time range
+
+2500.75
+sales_volumn	integer	
+Sales volume of the video within the selected time range
+
+45
+views	integer	
+Views of the video within the selected time range
+
+150000
+video_gpm	number	
+Revenue per thousand views (GPM) of the video within the selected time range
+
+16.67
+ads_views	integer	
+Ad views of the video
+
+12000
+ads_roas	number	
+ROAS (Return on Ad Spend) of the video ads
+
+3.5
+ads_period	integer	
+Ad campaign duration in days within the selected time range
+
+7
+digg_count	integer	
+Like count
+
+15000
+share_count	integer	
+Share count
+
+2500
+comment_count	integer	
+Comment count
+
+800
+ad_cpa	number	
+Single transaction advertising cost of the video under specified date
+
+3500.25
+revenue_trend	array<number>	
+revenue trend within the selected time range (day-by-day series in the response currency)
+
+[50000,62000]
+ad	integer	
+Whether this video is an ad video. 1 = ad, 0 = organic.
+
+1
+ad_view_ratio	number	
+Ad view ratio
+
+0.12
+duration	number	
+duration(s)
+
+12
+ai_video	integer	
+Whether the video is AI-generated (1: yes, 0: no)
+
+1
+message	string	
+debug	object	
+cached	boolean	
+code	string	
+API Debug
+Fixed Request Params
+
+
+{
+  "region": "US",
+  "language": "en-US",
+  "currency": "USD",
+  "date_range": "last7Day",
+  "video_id": "7404191282148511007",
+  "need_extra": false
+}
+Mock Response (JSON)
+
+
+{
+  "success": false,
+  "data": {
+    "video_id": "7627814494370057503",
+    "video_region": "US",
+    "video_title": "Product Review: Best Tech of 2024",
+    "belonged_creator_id": "7434060602055984170",
+    "belonged_creator_handle": "techreviewer",
+    "product_number": 5,
+    "revenue": 2500.75,
+    "sales_volumn": 45,
+    "views": 150000,
+    "video_gpm": 16.67,
+    "ads_views": 12000,
+    "ads_roas": 3.5,
+    "ads_period": 7,
+    "digg_count": 15000,
+    "share_count": 2500,
+    "comment_count": 800,
+    "ad_cpa": 3500.25,
+    "revenue_trend": [
+      50000,
+      62000
+    ],
+    "ad": 1,
+    "ad_view_ratio": 0.12,
+    "duration": 12,
+    "ai_video": 1
+  },
+  "message": "string",
+  "cached": false,
+  "code": "string"
+}
+
+Get video ranking list
+Retrieve ranking list of videos based on specified criteria and filters.
+
+date_range: window is capped at 30 days. Supports lastDay, last7Day, last30Day, a natural yyyy-MM-dd~yyyy-MM-dd (span ≤ 30 days), or a natural month yyyy-MM.
+
+sort_field.field: revenue (default), views, revenue_growth_rate, ads_roas, video_id, video_title, belonged_creator_id, belonged_creator_handle. Default sort is revenue DESC.
+
+Post
+https://www.kalodata.com/openapi/v1/tiktok/video/rank
+
+
+Integration Method
+All endpoints use HTTP POST + JSON with secret-key authentication in headers. Common fields: region / language / currency / date_range. You can use fixed request params below for local debugging and mock response preview.
+
+API Rate Limit
+Max
+10
+Requests /10 Second
+Request Parameters
+Field	Type	Description	Example	Required
+region	string	
+Data country code, e.g. US, BR, MX, ID, JP, MY, PH, SG, TH, VN, GB, ES, DE, FR, IT.
+
+US	Yes
+language	string	
+Language for text fields in the response. Currently supports zh-CN, en-US, id-ID, th-TH, vi-VN, es-ES, ja-JP, pt-BR, ko-KR, fr-FR.
+
+en-US	Yes
+currency	string	
+Currency unit for revenue and price fields. Currently supports CNY, USD, IDR, VND, THB, MYR, JPY, PHP, GBP, SGD, MXN, EUR, BRL.
+
+USD	Yes
+date_range	string	
+Date range. Accepts named ranges (lastDay, last7Day, last30Day, last60Day, last90Day, last180Day, last365Day), a natural date range in yyyy-MM-dd~yyyy-MM-dd form, or a natural month yyyy-MM. Some endpoints restrict this set — see the per-endpoint description.
+
+last7Day	Yes
+sort_field	object	
+Sort spec. field accepts any numeric field from the response; type is ASC or DESC. Defaults to {"field":"revenue","type":"DESC"}.
+
+Yes
+field	string	
+Sort field name. Any numeric field returned by the endpoint is supported (e.g. revenue, sales_volumn, revenue_growth_rate).
+
+revenue	No
+type	string	
+Sort direction.
+
+DESC	No
+rank_field	string	
+Legacy shortcut for the sort field name; prefer sort_field. Ignored when sort_field is set.
+
+revenue	No
+asc	boolean	
+Legacy ascending flag paired with rank_field. Default false (DESC).
+
+false	No
+page_size	integer	
+Page size. Maximum 100 records per query. Default 10.
+
+20	No
+page_number	integer	
+Page number, starting at 1.
+
+1	No
+category_ids	array<string>	
+Restrict results to videos in the given category IDs.
+
+["700645","223"]	No
+shop_id	string	
+Restrict results to videos promoting the given shop's products.
+
+7494965300835814281	No
+creator_id	string	
+Restrict results to videos published by the given creator.
+
+7146196785349985326	No
+product_id	string	
+Restrict results to videos mounting the given product.
+
+1729587769570529799	No
+revenue_range	string	
+Revenue range filter, in the same currency as the request currency. Also supports <100 / >1000 forms.
+
+1-100	No
+followers_range	string	
+Follower count range of the video's creator.
+
+1000-10000	No
+ads_roas	string	
+Estimated ad ROAS filter. Accepts a single value, a range (1-2.5), or open-ended (<1, >5).
+
+1-2.5	No
+keyword	string	
+Keyword for video search
+
+fashion	No
+is_ai_video	integer	
+Filter videos by AI-generated flag. 1: only AI videos; 0: only non-AI videos; null: no filter
+
+1	No
+Response Parameters
+Field	Type	Description	Example
+success	boolean	
+data	array<object>	
+video_id	string	
+Video ID
+
+7627814494370057503
+video_title	string	
+Video title content
+
+Sweet girl essential!
+belonged_creator_id	string	
+Creator ID that the video belongs to
+
+7434060602055984170
+belonged_creator_handle	string	
+Creator handle that the video belongs to
+
+techreviewer
+revenue	number	
+Revenue of the video under specified date and category
+
+3500.25
+views	integer	
+Views of the video within the selected time range
+
+250000
+revenue_growth_rate	number	
+Revenue growth rate of the video
+
+15.5
+ads_roas	number	
+ROAS (Return on Ad Spend) of the video within the selected time range
+
+4.2
+digg_count	integer	
+Like count
+
+15000
+share_count	integer	
+Share count
+
+2500
+comment_count	integer	
+Comment count
+
+800
+ad_revenue_ratio	number	
+Ad revenue ratio
+
+0.35
+ad_view_ratio	number	
+Ad view ratio
+
+0.12
+creator_debut	string	
+Video debut time
+
+2024-01-15
+ad	integer	
+Whether this video is an ad video. 1 = ad, 0 = organic.
+
+1
+ai_video	integer	
+Whether the video is AI-generated (1: yes, 0: no)
+
+1
+message	string	
+debug	object	
+cached	boolean	
+code	string	
+API Debug
+Fixed Request Params
+
+
+{
+  "region": "US",
+  "language": "en-US",
+  "currency": "USD",
+  "date_range": "last7Day",
+  "sort_field": {
+    "field": "revenue",
+    "type": "DESC"
+  },
+  "rank_field": "revenue",
+  "asc": false,
+  "page_size": 20,
+  "page_number": 1,
+  "category_ids": [
+    "700645",
+    "223"
+  ],
+  "shop_id": "7494965300835814281",
+  "creator_id": "7146196785349985326",
+  "product_id": "1729587769570529799",
+  "revenue_range": "1-100",
+  "followers_range": "1000-10000",
+  "ads_roas": "1-2.5",
+  "keyword": "fashion",
+  "is_ai_video": 1
+}
+Mock Response (JSON)
+
+
+{
+  "success": false,
+  "data": [
+    {
+      "video_id": "7627814494370057503",
+      "video_title": "Sweet girl essential!",
+      "belonged_creator_id": "7434060602055984170",
+      "belonged_creator_handle": "techreviewer",
+      "revenue": 3500.25,
+      "views": 250000,
+      "revenue_growth_rate": 15.5,
+      "ads_roas": 4.2,
+      "digg_count": 15000,
+      "share_count": 2500,
+      "comment_count": 800,
+      "ad_revenue_ratio": 0.35,
+      "ad_view_ratio": 0.12,
+      "creator_debut": "2024-01-15",
+      "ad": 1,
+      "ai_video": 1
+    }
+  ],
+  "message": "string",
+  "cached": false,
+  "code": "string"
+}
+
+Get shop details
+Retrieve detailed information for a specific shop
+
+Post
+https://www.kalodata.com/openapi/v1/tiktok/shop/detail
+
+
+Integration Method
+All endpoints use HTTP POST + JSON with secret-key authentication in headers. Common fields: region / language / currency / date_range. You can use fixed request params below for local debugging and mock response preview.
+
+API Rate Limit
+Max
+100
+Requests /10 Second
+Request Parameters
+Field	Type	Description	Example	Required
+region	string	
+Data country code, e.g. US, BR, MX, ID, JP, MY, PH, SG, TH, VN, GB, ES, DE, FR, IT.
+
+US	Yes
+language	string	
+Language for text fields in the response. Currently supports zh-CN, en-US, id-ID, th-TH, vi-VN, es-ES, ja-JP, pt-BR, ko-KR, fr-FR.
+
+en-US	Yes
+currency	string	
+Currency unit for revenue and price fields. Currently supports CNY, USD, IDR, VND, THB, MYR, JPY, PHP, GBP, SGD, MXN, EUR, BRL.
+
+USD	Yes
+date_range	string	
+Date range. Accepts named ranges (lastDay, last7Day, last30Day, last60Day, last90Day, last180Day, last365Day), a natural date range in yyyy-MM-dd~yyyy-MM-dd form, or a natural month yyyy-MM. Some endpoints restrict this set — see the per-endpoint description.
+
+last7Day	Yes
+shop_id	string	
+Shop ID to query.
+
+7494965300835814281	Yes
+category_ids	array<string>	
+Restrict revenue attribution to the given category IDs.
+
+["601450"]	No
+need_extra	boolean	
+Need Extra Info
+
+false	No
+Response Parameters
+Field	Type	Description	Example
+success	boolean	
+data	object	
+shop_id	string	
+Shop ID
+
+7495514739648989419
+shop_name	string	
+Shop name
+
+TechStore
+region	string	
+Shop country / region (matches the request region value).
+
+US
+revenue	number	
+Shop revenue within selected time period
+
+125000.5
+shoppingmall_revenue	number	
+Shop revenue through shopping mall channel within selected time period
+
+45000.25
+self_account_revenue	number	
+Shop revenue through self-operated account orders within selected time period
+
+55000.75
+affiliate_revenue	number	
+Shop revenue through affiliate partner account orders within selected time period
+
+25000
+sales_volumn	integer	
+Shop sales volume, total sales volume of shop products within selected time period
+
+2500
+unit_price	number	
+Shop's average unit price within selected time period
+
+50
+creator_number	integer	
+Number of affiliate creators collaborating with shop within selected time period
+
+15
+product_number	integer	
+Number of products listed by shop within selected time period
+
+125
+video_number	integer	
+Number of videos with shop products that have exposure within selected time period
+
+85
+live_number	integer	
+Number of live streams featuring shop products within selected time period
+
+25
+revenue_trend	array<number>	
+shop revenue trend within selected time period
+
+[25.1,24.3]
+top3_product_ids	array<string>	
+top3 product ids within selected time period
+
+["1733316657074833297"]
+seller_type	string	
+seller type
+
+BRAND
+message	string	
+debug	object	
+cached	boolean	
+code	string	
+API Debug
+Fixed Request Params
+
+
+{
+  "region": "US",
+  "language": "en-US",
+  "currency": "USD",
+  "date_range": "last7Day",
+  "shop_id": "7494965300835814281",
+  "category_ids": [
+    "601450"
+  ],
+  "need_extra": false
+}
+Mock Response (JSON)
+
+
+{
+  "success": false,
+  "data": {
+    "shop_id": "7495514739648989419",
+    "shop_name": "TechStore",
+    "region": "US",
+    "revenue": 125000.5,
+    "shoppingmall_revenue": 45000.25,
+    "self_account_revenue": 55000.75,
+    "affiliate_revenue": 25000,
+    "sales_volumn": 2500,
+    "unit_price": 50,
+    "creator_number": 15,
+    "product_number": 125,
+    "video_number": 85,
+    "live_number": 25,
+    "revenue_trend": [
+      25.1,
+      24.3
+    ],
+    "top3_product_ids": [
+      "1733316657074833297"
+    ],
+    "seller_type": "BRAND"
+  },
+  "message": "string",
+  "cached": false,
+  "code": "string"
+}
+
+Get shop ranking list
+Retrieve ranking list of shops based on specified criteria and filters.
+
+date_range: window is capped at 30 days. Supports lastDay, last7Day, last30Day, a natural yyyy-MM-dd~yyyy-MM-dd (span ≤ 30 days), or a natural month yyyy-MM.
+
+sort_field.field: revenue (default), sales_volumn, revenue_growth_rate, unit_price, shop_type, affiliate_revenue, self_promotion_revenue, shopping_mall_revenue, on_sell_product_count, rank, shop_id, shop_name. Default sort is revenue DESC.
+
+Post
+https://www.kalodata.com/openapi/v1/tiktok/shop/rank
+
+
+Integration Method
+All endpoints use HTTP POST + JSON with secret-key authentication in headers. Common fields: region / language / currency / date_range. You can use fixed request params below for local debugging and mock response preview.
+
+API Rate Limit
+Max
+10
+Requests /10 Second
+Request Parameters
+Field	Type	Description	Example	Required
+region	string	
+Data country code, e.g. US, BR, MX, ID, JP, MY, PH, SG, TH, VN, GB, ES, DE, FR, IT.
+
+US	Yes
+language	string	
+Language for text fields in the response. Currently supports zh-CN, en-US, id-ID, th-TH, vi-VN, es-ES, ja-JP, pt-BR, ko-KR, fr-FR.
+
+en-US	Yes
+currency	string	
+Currency unit for revenue and price fields. Currently supports CNY, USD, IDR, VND, THB, MYR, JPY, PHP, GBP, SGD, MXN, EUR, BRL.
+
+USD	Yes
+date_range	string	
+Date range. Accepts named ranges (lastDay, last7Day, last30Day, last60Day, last90Day, last180Day, last365Day), a natural date range in yyyy-MM-dd~yyyy-MM-dd form, or a natural month yyyy-MM. Some endpoints restrict this set — see the per-endpoint description.
+
+last7Day	Yes
+sort_field	object	
+Sort spec. field accepts any numeric field from the response; type is ASC or DESC. Defaults to {"field":"revenue","type":"DESC"}.
+
+Yes
+field	string	
+Sort field name. Any numeric field returned by the endpoint is supported (e.g. revenue, sales_volumn, revenue_growth_rate).
+
+revenue	No
+type	string	
+Sort direction.
+
+DESC	No
+rank_field	string	
+Legacy shortcut for the sort field name; prefer sort_field. Ignored when sort_field is set.
+
+revenue	No
+asc	boolean	
+Legacy ascending flag paired with rank_field. Default false (DESC).
+
+false	No
+page_size	integer	
+Page size. Maximum 100 records per query. Default 10.
+
+20	No
+page_number	integer	
+Page number, starting at 1.
+
+1	No
+category_ids	array<string>	
+Restrict results to shops that sell in the given category IDs.
+
+["601450"]	No
+revenue_range	string	
+Shop revenue range filter, in the same currency as the request currency. Also supports <100 / >1000 forms.
+
+100-1000	No
+shop_type	string	
+Shop type filter. BRAND = brand-owned store, RETAILER = retailer store.
+
+BRAND	No
+keyword	string	
+Keyword for shop search
+
+electronics	No
+need_image	integer	
+Whether main image URL is needed: 0 not needed (default), 1 return official URL, 2 return kalo_data image URL (paid service required)
+
+1	No
+need_category	integer	
+Whether category information is needed (0 = not needed, 1 = needed)
+
+0	No
+unit_price_range	string	
+Shop product avg price range
+
+10-100	No
+Response Parameters
+Field	Type	Description	Example
+success	boolean	
+data	array<object>	
+shop_id	string	
+Shop ID
+
+7495514739648989419
+shop_name	string	
+Shop name
+
+TechWorld Store
+rank	integer	
+Shop ranking obtained based on sorting criteria under the selected conditions
+
+5
+revenue	number	
+Shop transaction amount
+
+125000.75
+sales_volumn	integer	
+Shop sales volume, total sales volume of products under the shop within the selected time range
+
+2500
+revenue_growth_rate	number	
+Shop transaction amount growth rate
+
+18.5
+unit_price	number	
+Average unit price of the shop within the selected time range
+
+50
+shop_type	string	
+Categorized into retail shops and brand shops
+
+BRAND
+on_sell_product_count	integer	
+Number of products on sale
+
+85
+affiliate_revenue	number	
+Shop revenue through affiliate partner account orders within selected time period
+
+25000
+self_promotion_revenue	number	
+Shop revenue through self-operated account orders within selected time period
+
+55000.75
+shopping_mall_revenue	number	
+Shop revenue through shopping mall channel within selected time period
+
+45000.25
+image_url	string	
+Shop image URL
+
+https://p16-oec-ttp.tiktokcdn-us.com/tos-useast5-i-omjb5zjo8w-tx/4ae4940e7bcf436491ab2ddb3363ce9c~tplv-omjb5zjo8w-resize-webp:800:800.jpeg
+category_list	array<string>	
+Category names, returns category names in different languages based on different language parameters
+
+["Electronics","Fashion","Home"]
+category_id_list	array<string>	
+Category IDs, returns category IDs in different languages based on different language parameters
+
+["12345","67890","11111"]
+message	string	
+debug	object	
+cached	boolean	
+code	string	
+API Debug
+Fixed Request Params
+
+
+{
+  "region": "US",
+  "language": "en-US",
+  "currency": "USD",
+  "date_range": "last7Day",
+  "sort_field": {
+    "field": "revenue",
+    "type": "DESC"
+  },
+  "rank_field": "revenue",
+  "asc": false,
+  "page_size": 20,
+  "page_number": 1,
+  "category_ids": [
+    "601450"
+  ],
+  "revenue_range": "100-1000",
+  "shop_type": "BRAND",
+  "keyword": "electronics",
+  "need_image": 1,
+  "need_category": 0,
+  "unit_price_range": "10-100"
+}
+Mock Response (JSON)
+
+
+{
+  "success": false,
+  "data": [
+    {
+      "shop_id": "7495514739648989419",
+      "shop_name": "TechWorld Store",
+      "rank": 5,
+      "revenue": 125000.75,
+      "sales_volumn": 2500,
+      "revenue_growth_rate": 18.5,
+      "unit_price": 50,
+      "shop_type": "BRAND",
+      "on_sell_product_count": 85,
+      "affiliate_revenue": 25000,
+      "self_promotion_revenue": 55000.75,
+      "shopping_mall_revenue": 45000.25,
+      "image_url": "https://p16-oec-ttp.tiktokcdn-us.com/tos-useast5-i-omjb5zjo8w-tx/4ae4940e7bcf436491ab2ddb3363ce9c~tplv-omjb5zjo8w-resize-webp:800:800.jpeg",
+      "category_list": [
+        "Electronics",
+        "Fashion",
+        "Home"
+      ],
+      "category_id_list": [
+        "12345",
+        "67890",
+        "11111"
+      ]
+    }
+  ],
+  "message": "string",
+  "cached": false,
+  "code": "string"
+}
+
+Get product details
+Retrieve detailed information for a specific product. The response includes product_description (structured text/image blocks; empty array when unavailable).
+
+Post
+https://www.kalodata.com/openapi/v1/tiktok/product/detail
+
+
+Integration Method
+All endpoints use HTTP POST + JSON with secret-key authentication in headers. Common fields: region / language / currency / date_range. You can use fixed request params below for local debugging and mock response preview.
+
+API Rate Limit
+Max
+100
+Requests /10 Second
+Request Parameters
+Field	Type	Description	Example	Required
+region	string	
+Data country code, e.g. US, BR, MX, ID, JP, MY, PH, SG, TH, VN, GB, ES, DE, FR, IT.
+
+US	Yes
+language	string	
+Language for text fields in the response. Currently supports zh-CN, en-US, id-ID, th-TH, vi-VN, es-ES, ja-JP, pt-BR, ko-KR, fr-FR.
+
+en-US	Yes
+currency	string	
+Currency unit for revenue and price fields. Currently supports CNY, USD, IDR, VND, THB, MYR, JPY, PHP, GBP, SGD, MXN, EUR, BRL.
+
+USD	Yes
+date_range	string	
+Date range. Accepts named ranges (lastDay, last7Day, last30Day, last60Day, last90Day, last180Day, last365Day), a natural date range in yyyy-MM-dd~yyyy-MM-dd form, or a natural month yyyy-MM. Some endpoints restrict this set — see the per-endpoint description.
+
+last7Day	Yes
+product_id	string	
+Product ID to query.
+
+1729587769570529799	Yes
+need_image	integer	
+Whether main image URL is needed: 0-not needed (default), 1-return official URL, 2-return kalo_data image URL (paid service required)
+
+1	No
+need_extra	boolean	
+Need Extra Info
+
+false	No
+Response Parameters
+Field	Type	Description	Example
+success	boolean	
+data	object	
+product_id	string	
+Product ID
+
+7495514739648989419
+product_region	string	
+Product country/region
+
+US
+product_name	string	
+Product name
+
+Smart Watch Pro
+product_shop_id	string	
+Product shop ID
+
+7495514739648989419
+pri_cate_id	string	
+Product primary category ID
+
+12345
+sec_cate_id	string	
+Product secondary category ID
+
+67890
+ter_cate_id	string	
+Product tertiary category ID
+
+13579
+max_price	number	
+Maximum SKU price of the product
+
+299.99
+min_price	number	
+Minimum SKU price of the product
+
+199.99
+revenue	number	
+Revenue of the product within the selected time range
+
+15000.75
+video_revenue	number	
+Video revenue of the product within the selected time range
+
+8500.25
+live_revenue	number	
+Livestream revenue of the product within the selected time range
+
+6500.5
+sales_volumn	integer	
+Sales volume of the product within the selected time range
+
+750
+creator_number	integer	
+Number of creators who have promoted this product within the selected time range
+
+25
+video_number	integer	
+Number of videos that have promoted this product within the selected time range
+
+85
+live_number	integer	
+Number of livestreams that have promoted this product within the selected time range
+
+15
+delivery_type	string	
+Fulfillment mode of the product.
+
+local
+shopping_mall_revenue	number	
+Shopping mall revenue
+
+5000
+commission_rate	number	
+Product commission rate. Value is percentage points, i.e. 1.0 = 1%.
+
+1
+unit_price	number	
+Unit price of the product within the selected time range
+
+20
+product_review_count	integer	
+Product review count
+
+120
+launch_date	string	
+Product launch date
+
+2024-02-01
+master_image_url	string	
+Main image URL
+
+https://p16-oec-ttp.tiktokcdn-us.com/tos-useast5-i-omjb5zjo8w-tx/cad4b7c7409f459a87c54baf31ff8a20~tplv-omjb5zjo8w-resize-webp:800:800.jpeg
+revenue_trend	array<number>	
+revenue trend within selected time period
+
+[25.1,24.3]
+product_description	array<object>	
+Product description details as mixed text/image blocks. Empty array when unavailable.
+
+[{"type":"image","url":"https://example.com/a.jpg"},{"type":"text","content":"Product introduction"}]
+message	string	
+debug	object	
+cached	boolean	
+code	string	
+API Debug
+Fixed Request Params
+
+
+{
+  "region": "US",
+  "language": "en-US",
+  "currency": "USD",
+  "date_range": "last7Day",
+  "product_id": "1729587769570529799",
+  "need_image": 1,
+  "need_extra": false
+}
+Mock Response (JSON)
+
+
+{
+  "success": false,
+  "data": {
+    "product_id": "7495514739648989419",
+    "product_region": "US",
+    "product_name": "Smart Watch Pro",
+    "product_shop_id": "7495514739648989419",
+    "pri_cate_id": "12345",
+    "sec_cate_id": "67890",
+    "ter_cate_id": "13579",
+    "max_price": 299.99,
+    "min_price": 199.99,
+    "revenue": 15000.75,
+    "video_revenue": 8500.25,
+    "live_revenue": 6500.5,
+    "sales_volumn": 750,
+    "creator_number": 25,
+    "video_number": 85,
+    "live_number": 15,
+    "delivery_type": "local",
+    "shopping_mall_revenue": 5000,
+    "commission_rate": 1,
+    "unit_price": 20,
+    "product_review_count": 120,
+    "launch_date": "2024-02-01",
+    "master_image_url": "https://p16-oec-ttp.tiktokcdn-us.com/tos-useast5-i-omjb5zjo8w-tx/cad4b7c7409f459a87c54baf31ff8a20~tplv-omjb5zjo8w-resize-webp:800:800.jpeg",
+    "revenue_trend": [
+      25.1,
+      24.3
+    ],
+    "product_description": [
+      {
+        "type": "image",
+        "url": "https://example.com/a.jpg"
+      },
+      {
+        "type": "text",
+        "content": "Product introduction"
+      }
+    ]
+  },
+  "message": "string",
+  "cached": false,
+  "code": "string"
+}
+
+Get product ranking list
+Retrieve ranking list of products based on specified criteria and filters.
+
+date_range: window is capped at 30 days. Supports lastDay, last7Day, last30Day, a natural yyyy-MM-dd~yyyy-MM-dd (span ≤ 30 days), or a natural month yyyy-MM.
+
+sort_field.field: revenue (default), commission_rate, revenue_growth_rate, sales_volumn, unit_price, launch_date, live_revenue, video_revenue, showcase_revenue, product_id, product_name. Default sort is revenue DESC.
+
+Post
+https://www.kalodata.com/openapi/v1/tiktok/product/rank
+
+
+Integration Method
+All endpoints use HTTP POST + JSON with secret-key authentication in headers. Common fields: region / language / currency / date_range. You can use fixed request params below for local debugging and mock response preview.
+
+API Rate Limit
+Max
+10
+Requests /10 Second
+Request Parameters
+Field	Type	Description	Example	Required
+region	string	
+Data country code, e.g. US, BR, MX, ID, JP, MY, PH, SG, TH, VN, GB, ES, DE, FR, IT.
+
+US	Yes
+language	string	
+Language for text fields in the response. Currently supports zh-CN, en-US, id-ID, th-TH, vi-VN, es-ES, ja-JP, pt-BR, ko-KR, fr-FR.
+
+en-US	Yes
+currency	string	
+Currency unit for revenue and price fields. Currently supports CNY, USD, IDR, VND, THB, MYR, JPY, PHP, GBP, SGD, MXN, EUR, BRL.
+
+USD	Yes
+date_range	string	
+Date range. Accepts named ranges (lastDay, last7Day, last30Day, last60Day, last90Day, last180Day, last365Day), a natural date range in yyyy-MM-dd~yyyy-MM-dd form, or a natural month yyyy-MM. Some endpoints restrict this set — see the per-endpoint description.
+
+last7Day	Yes
+sort_field	object	
+Sort spec. field accepts any numeric field from the response; type is ASC or DESC. Defaults to {"field":"revenue","type":"DESC"}.
+
+Yes
+field	string	
+Sort field name. Any numeric field returned by the endpoint is supported (e.g. revenue, sales_volumn, revenue_growth_rate).
+
+revenue	No
+type	string	
+Sort direction.
+
+DESC	No
+rank_field	string	
+Legacy shortcut for the sort field name; prefer sort_field. Ignored when sort_field is set.
+
+revenue	No
+asc	boolean	
+Legacy ascending flag paired with rank_field. Default false (DESC).
+
+false	No
+page_size	integer	
+Page size. Maximum 100 records per query. Default 10.
+
+20	No
+page_number	integer	
+Page number, starting at 1.
+
+1	No
+category_ids	array<string>	
+Restrict results to the given category IDs.
+
+["601450"]	No
+shop_id	string	
+Restrict results to the given shop.
+
+7495634116320922282	No
+creator_id	string	
+Restrict results to products promoted by the given creator. Combined with shop_id returns the creator's list for that shop.
+
+7495634116320922282	No
+video_id	string	
+Return the products mounted on the given video.
+
+7495634116320922282	No
+livestream_id	string	
+Return the products mounted in the given live stream.
+
+7495634116320922282	No
+revenue_range	string	
+Revenue range filter, in the same currency as the request currency. Also supports <10 / >1 forms.
+
+1-10	No
+is_affiliate	integer	
+Affiliate-program filter. 0 = non-affiliate only, 1 = affiliate only.
+
+1	No
+commission_rate	string	
+Commission rate filter for affiliate products. Accepts range (15-35), open-ended (<10, >=30), or a single ratio.
+
+15-35	No
+is_tts_product	integer	
+TTS (Tiktok fully-managed) product filter. 1 = fully managed only, 0 = self-fulfilled only.
+
+1	No
+unit_price_range	string	
+Product unit-price range filter.
+
+1-1000	No
+need_all	boolean	
+If true, include products that have no sales in the selected period. Default false (sales-only).
+
+false	No
+delivery_type	string	
+Delivery mode filter. local = domestic fulfillment, global = cross-border.
+
+local	No
+launch_date	string	
+Days since product launch. <3 = within 3 days, <7 = within 7 days, >30 = older than 30 days.
+
+<7	No
+need_image	integer	
+Whether main image URL is needed: 0-not needed (default), 1-return official URL, 2-return kalo_data image URL (paid service required)
+
+1	No
+keyword	string	
+Keyword search
+
+mobile phone	No
+need_extra	boolean	
+Need Extra Info,such as seller name, SKU quantity.
+
+false	No
+Response Parameters
+Field	Type	Description	Example
+success	boolean	
+data	array<object>	
+product_id	string	
+Product ID
+
+1729508370969629931
+product_name	string	
+Product name
+
+Wireless Bluetooth Headphones
+revenue	number	
+Revenue completed under specified conditions
+
+8500.5
+commission_rate	number	
+Product commission rate, updated daily for top products
+
+15
+revenue_growth_rate	number	
+Product revenue growth rate
+
+25.8
+sales_volumn	integer	
+Sales volume of the product within the selected time range
+
+340
+unit_price	number	
+Unit price of the product within the selected time range
+
+25
+live_revenue	number	
+Livestream revenue of the product within the selected time range
+
+1200
+video_revenue	number	
+Video revenue of the product within the selected time range
+
+800
+showcase_revenue	number	
+show case revenue
+
+500
+launch_date	string	
+Product launch date
+
+2024-01-15
+master_image_url	string	
+Main image URL
+
+https://p16-oec-ttp.tiktokcdn-us.com/tos-useast5-i-omjb5zjo8w-tx/29510943b3664843abfd17e5371edd44~tplv-omjb5zjo8w-resize-webp:800:800.jpeg
+seller_id	string	
+Seller Id
+
+7495514739648989419
+seller_name	string	
+Seller name
+
+medicube US Store
+sku_count	string	
+Sku Cnt
+
+2
+message	string	
+debug	object	
+cached	boolean	
+code	string	
+API Debug
+Fixed Request Params
+
+
+{
+  "region": "US",
+  "language": "en-US",
+  "currency": "USD",
+  "date_range": "last7Day",
+  "sort_field": {
+    "field": "revenue",
+    "type": "DESC"
+  },
+  "rank_field": "revenue",
+  "asc": false,
+  "page_size": 20,
+  "page_number": 1,
+  "category_ids": [
+    "601450"
+  ],
+  "shop_id": "7495634116320922282",
+  "creator_id": "7495634116320922282",
+  "video_id": "7495634116320922282",
+  "livestream_id": "7495634116320922282",
+  "revenue_range": "1-10",
+  "is_affiliate": 1,
+  "commission_rate": "15-35",
+  "is_tts_product": 1,
+  "unit_price_range": "1-1000",
+  "need_all": false,
+  "delivery_type": "local",
+  "launch_date": "<7",
+  "need_image": 1,
+  "keyword": "mobile phone",
+  "need_extra": false
+}
+Mock Response (JSON)
+
+
+{
+  "success": false,
+  "data": [
+    {
+      "product_id": "1729508370969629931",
+      "product_name": "Wireless Bluetooth Headphones",
+      "revenue": 8500.5,
+      "commission_rate": 15,
+      "revenue_growth_rate": 25.8,
+      "sales_volumn": 340,
+      "unit_price": 25,
+      "live_revenue": 1200,
+      "video_revenue": 800,
+      "showcase_revenue": 500,
+      "launch_date": "2024-01-15",
+      "master_image_url": "https://p16-oec-ttp.tiktokcdn-us.com/tos-useast5-i-omjb5zjo8w-tx/29510943b3664843abfd17e5371edd44~tplv-omjb5zjo8w-resize-webp:800:800.jpeg",
+      "seller_id": "7495514739648989419",
+      "seller_name": "medicube US Store",
+      "sku_count": "2"
+    }
+  ],
+  "message": "string",
+  "cached": false,
+  "code": "string"
+}
+
+
+Get livestream details
+Retrieve detailed information for a specific livestream
+
+Post
+https://www.kalodata.com/openapi/v1/tiktok/livestream/detail
+
+
+Integration Method
+All endpoints use HTTP POST + JSON with secret-key authentication in headers. Common fields: region / language / currency / date_range. You can use fixed request params below for local debugging and mock response preview.
+
+API Rate Limit
+Max
+100
+Requests /10 Second
+Request Parameters
+Field	Type	Description	Example	Required
+region	string	
+Data country code, e.g. US, BR, MX, ID, JP, MY, PH, SG, TH, VN, GB, ES, DE, FR, IT.
+
+US	Yes
+language	string	
+Language for text fields in the response. Currently supports zh-CN, en-US, id-ID, th-TH, vi-VN, es-ES, ja-JP, pt-BR, ko-KR, fr-FR.
+
+en-US	Yes
+currency	string	
+Currency unit for revenue and price fields. Currently supports CNY, USD, IDR, VND, THB, MYR, JPY, PHP, GBP, SGD, MXN, EUR, BRL.
+
+USD	Yes
+date_range	string	
+Date range. Accepts named ranges (lastDay, last7Day, last30Day, last60Day, last90Day, last180Day, last365Day), a natural date range in yyyy-MM-dd~yyyy-MM-dd form, or a natural month yyyy-MM. Some endpoints restrict this set — see the per-endpoint description.
+
+last7Day	Yes
+livestream_id	string	
+Live stream ID to query.
+
+7413090312010091307	Yes
+need_extra	boolean	
+Need Extra Info
+
+false	No
+Response Parameters
+Field	Type	Description	Example
+success	boolean	
+data	object	
+livestream_id	string	
+Live stream ID
+
+7649943840243059469
+livestream_title	string	
+Live stream title
+
+Live Shopping Event
+creator_handle	string	
+Live stream creator handle
+
+techreviewer
+creator_id	string	
+Live stream creator ID
+
+7205949066194781230
+livestream_start_time	integer	
+Live stream start time (milliseconds)
+
+1699123200000
+livestream_end_time	integer	
+Live stream end time (milliseconds)
+
+1699126800000
+livestream_duration	integer	
+Live stream duration (seconds)
+
+3600
+product_number	integer	
+Number of products sold in live stream
+
+15
+viewers	integer	
+Number of live stream viewers
+
+5000
+revenue	number	
+Live stream revenue
+
+8500.5
+gpm	number	
+Live stream GPM (revenue per thousand views)
+
+1.7
+top3_product_ids	array<string>	
+top3 product ids within selected time period
+
+["1733316657074833297"]
+record_type	string	
+Live record type
+
+SCREENSHOT
+message	string	
+debug	object	
+cached	boolean	
+code	string	
+API Debug
+Fixed Request Params
+
+
+{
+  "region": "US",
+  "language": "en-US",
+  "currency": "USD",
+  "date_range": "last7Day",
+  "livestream_id": "7413090312010091307",
+  "need_extra": false
+}
+Mock Response (JSON)
+
+
+{
+  "success": false,
+  "data": {
+    "livestream_id": "7649943840243059469",
+    "livestream_title": "Live Shopping Event",
+    "creator_handle": "techreviewer",
+    "creator_id": "7205949066194781230",
+    "livestream_start_time": 1699123200000,
+    "livestream_end_time": 1699126800000,
+    "livestream_duration": 3600,
+    "product_number": 15,
+    "viewers": 5000,
+    "revenue": 8500.5,
+    "gpm": 1.7,
+    "top3_product_ids": [
+      "1733316657074833297"
+    ],
+    "record_type": "SCREENSHOT"
+  },
+  "message": "string",
+  "cached": false,
+  "code": "string"
+}
+
+Get livestream ranking list
+Retrieve ranking list of livestreams based on specified criteria and filters.
+
+date_range: window is capped at 30 days. Supports lastDay, last7Day, last30Day, a natural yyyy-MM-dd~yyyy-MM-dd (span ≤ 30 days), or a natural month yyyy-MM.
+
+sort_field.field: revenue (default), unit_price, views, livestream_start_time, livestream_end_time, livestream_duration, livestream_id, livestream_title, creator_id, creator_handle. Default sort is revenue DESC.
+
+Post
+https://www.kalodata.com/openapi/v1/tiktok/livestream/rank
+
+
+Integration Method
+All endpoints use HTTP POST + JSON with secret-key authentication in headers. Common fields: region / language / currency / date_range. You can use fixed request params below for local debugging and mock response preview.
+
+API Rate Limit
+Max
+10
+Requests /10 Second
+Request Parameters
+Field	Type	Description	Example	Required
+region	string	
+Data country code, e.g. US, BR, MX, ID, JP, MY, PH, SG, TH, VN, GB, ES, DE, FR, IT.
+
+US	Yes
+language	string	
+Language for text fields in the response. Currently supports zh-CN, en-US, id-ID, th-TH, vi-VN, es-ES, ja-JP, pt-BR, ko-KR, fr-FR.
+
+en-US	Yes
+currency	string	
+Currency unit for revenue and price fields. Currently supports CNY, USD, IDR, VND, THB, MYR, JPY, PHP, GBP, SGD, MXN, EUR, BRL.
+
+USD	Yes
+date_range	string	
+Date range. Accepts named ranges (lastDay, last7Day, last30Day, last60Day, last90Day, last180Day, last365Day), a natural date range in yyyy-MM-dd~yyyy-MM-dd form, or a natural month yyyy-MM. Some endpoints restrict this set — see the per-endpoint description.
+
+last7Day	Yes
+sort_field	object	
+Sort spec. field accepts any numeric field from the response; type is ASC or DESC. Defaults to {"field":"revenue","type":"DESC"}.
+
+Yes
+field	string	
+Sort field name. Any numeric field returned by the endpoint is supported (e.g. revenue, sales_volumn, revenue_growth_rate).
+
+revenue	No
+type	string	
+Sort direction.
+
+DESC	No
+rank_field	string	
+Legacy shortcut for the sort field name; prefer sort_field. Ignored when sort_field is set.
+
+revenue	No
+asc	boolean	
+Legacy ascending flag paired with rank_field. Default false (DESC).
+
+false	No
+page_size	integer	
+Page size. Maximum 100 records per query. Default 10.
+
+20	No
+page_number	integer	
+Page number, starting at 1.
+
+1	No
+category_ids	array<string>	
+Restrict results to live streams in the given category IDs.
+
+["601450"]	No
+shop_id	string	
+Restrict results to live streams promoting the given shop's products.
+
+7494965300835814281	No
+creator_id	string	
+Restrict results to live streams hosted by the given creator.
+
+7014603102829593606	No
+product_id	string	
+Restrict results to live streams mounting the given product.
+
+1729587769570529799	No
+followers_range	string	
+Follower count range of the live stream host. Also supports <100 / >10000 forms.
+
+>100	No
+keyword	string	
+Keyword search
+
+beauty	No
+Response Parameters
+Field	Type	Description	Example
+success	boolean	
+data	array<object>	
+livestream_id	string	
+Live stream ID
+
+7649943840243059469
+livestream_title	string	
+Live stream title
+
+Top Products Live
+creator_handle	string	
+Live stream creator handle
+
+seller123
+creator_id	string	
+Live stream creator ID
+
+7205949066194781230
+livestream_start_time	integer	
+Live stream start time (milliseconds)
+
+1699123200000
+livestream_end_time	integer	
+Live stream end time (milliseconds)
+
+1699127800000
+livestream_duration	integer	
+Live stream duration in seconds
+
+4600
+revenue	string	
+Live stream revenue under selected category/shop/product
+
+15000.75
+unit_price	string	
+Live stream unit price under selected category/shop/product
+
+25.5
+views	integer	
+View count
+
+12000
+record_type	string	
+Live record type
+
+SCREENSHOT
+message	string	
+debug	object	
+cached	boolean	
+code	string	
+API Debug
+Fixed Request Params
+
+
+{
+  "region": "US",
+  "language": "en-US",
+  "currency": "USD",
+  "date_range": "last7Day",
+  "sort_field": {
+    "field": "revenue",
+    "type": "DESC"
+  },
+  "rank_field": "revenue",
+  "asc": false,
+  "page_size": 20,
+  "page_number": 1,
+  "category_ids": [
+    "601450"
+  ],
+  "shop_id": "7494965300835814281",
+  "creator_id": "7014603102829593606",
+  "product_id": "1729587769570529799",
+  "followers_range": ">100",
+  "keyword": "beauty"
+}
+Mock Response (JSON)
+
+
+{
+  "success": false,
+  "data": [
+    {
+      "livestream_id": "7649943840243059469",
+      "livestream_title": "Top Products Live",
+      "creator_handle": "seller123",
+      "creator_id": "7205949066194781230",
+      "livestream_start_time": 1699123200000,
+      "livestream_end_time": 1699127800000,
+      "livestream_duration": 4600,
+      "revenue": "15000.75",
+      "unit_price": "25.5",
+      "views": 12000,
+      "record_type": "SCREENSHOT"
+    }
+  ],
+  "message": "string",
+  "cached": false,
+  "code": "string"
+}
+
+
+Get creator details
+Retrieve detailed information for a specific creator
+
+Post
+https://www.kalodata.com/openapi/v1/tiktok/creator/detail
+
+
+Integration Method
+All endpoints use HTTP POST + JSON with secret-key authentication in headers. Common fields: region / language / currency / date_range. You can use fixed request params below for local debugging and mock response preview.
+
+API Rate Limit
+Max
+100
+Requests /10 Second
+Request Parameters
+Field	Type	Description	Example	Required
+region	string	
+Data country code, e.g. US, BR, MX, ID, JP, MY, PH, SG, TH, VN, GB, ES, DE, FR, IT.
+
+US	Yes
+language	string	
+Language for text fields in the response. Currently supports zh-CN, en-US, id-ID, th-TH, vi-VN, es-ES, ja-JP, pt-BR, ko-KR, fr-FR.
+
+en-US	Yes
+currency	string	
+Currency unit for revenue and price fields. Currently supports CNY, USD, IDR, VND, THB, MYR, JPY, PHP, GBP, SGD, MXN, EUR, BRL.
+
+USD	Yes
+date_range	string	
+Date range. Accepts named ranges (lastDay, last7Day, last30Day, last60Day, last90Day, last180Day, last365Day), a natural date range in yyyy-MM-dd~yyyy-MM-dd form, or a natural month yyyy-MM. Some endpoints restrict this set — see the per-endpoint description.
+
+last7Day	Yes
+creator_id	string	
+Creator ID to query.
+
+6937492675021095937	Yes
+category_ids	array<integer>	
+Restrict revenue attribution to the given category IDs.
+
+[700645,223]	No
+shop_id	string	
+Restrict revenue attribution to products from the given shop.
+
+7495634116320922282	No
+need_extra	boolean	
+Need Extra Info
+
+false	No
+Response Parameters
+Field	Type	Description	Example
+success	boolean	
+data	object	
+creator_id	string	
+Creator ID
+
+6865455528727708677
+creator_nickname	string	
+Creator nickname
+
+TechReviewer
+creator_handle	string	
+Creator handle
+
+techreviewer
+creator_region	string	
+Creator's country/region
+
+US
+creator_status	string	
+Creator identity. BELONGED_TO_SELLER = shop-owned creator, INDEPENDENT = independent affiliate creator.
+
+INDEPENDENT
+creator_belonged_shop_id	string	
+Creator's affiliated shop, empty if creator is an affiliate creator
+
+7495514739648989419
+creator_bio	string	
+Creator bio on profile page, updated daily for top creators
+
+Tech enthusiast sharing the latest gadgets
+creator_contact_email	string	
+Creator's email
+
+creator@example.com
+creator_contact_tiktok	string	
+Creator's TikTok account
+
+techreviewer_tiktok
+creator_contact_whatsapp	string	
+Creator's WhatsApp account
+
++1234567890
+creator_contact_line	string	
+Creator's Line account
+
+techreviewer_line
+creator_contact_facebook	string	
+Creator's Facebook account
+
+techreviewer.fb
+creator_contact_ins	string	
+Creator's Instagram account
+
+@techreviewer_insta
+creator_contact_zalo	string	
+Creator's Zalo account
+
+techreviewer_zalo
+revenue	number	
+Creator's sales revenue in selected category during selected period
+
+12500.75
+sales_volumn	integer	
+Creator's sales volume in selected category during selected period
+
+150
+unit_price	number	
+Creator's average unit price in selected category during selected period
+
+83.34
+video_revenue	number	
+Creator's revenue from video sales of selected category products during selected period
+
+7500.25
+live_revenue	number	
+Creator's revenue from live stream sales of selected category products during selected period
+
+5000.5
+video_views	integer	
+Creator's total video view count during selected period
+
+250000
+live_views	integer	
+Creator's total live stream view count during selected period
+
+180000
+live_gpm	number	
+Creator's GPM from live stream sales during selected period, GPM is revenue per thousand views
+
+27.78
+video_gpm	number	
+Creator's GPM from video sales during selected period, GPM is revenue per thousand views
+
+30
+new_followers	integer	
+Number of new followers gained by creator during selected period
+
+5000
+video_number	integer	
+Number of videos with views by creator during selected period
+
+25
+live_number	integer	
+Number of live streams conducted by creator during selected period
+
+10
+shop_number	integer	
+Number of shops collaborated with by creator during selected period
+
+8
+product_number	integer	
+Number of products sold by creator during selected period
+
+45
+creator_followers	string	
+Creator's follower count, updated daily
+
+100000
+revenue_trend	array<number>	
+Creator's sales revenue trend in selected category during selected period
+
+[25.1,24.3]
+top3_product_ids	array<string>	
+Creator's sales top3 product ids in selected category during selected period
+
+[25.1,24.3]
+message	string	
+debug	object	
+cached	boolean	
+code	string	
+API Debug
+Fixed Request Params
+
+
+{
+  "region": "US",
+  "language": "en-US",
+  "currency": "USD",
+  "date_range": "last7Day",
+  "creator_id": "6937492675021095937",
+  "category_ids": [
+    700645,
+    223
+  ],
+  "shop_id": "7495634116320922282",
+  "need_extra": false
+}
+Mock Response (JSON)
+
+
+{
+  "success": false,
+  "data": {
+    "creator_id": "6865455528727708677",
+    "creator_nickname": "TechReviewer",
+    "creator_handle": "techreviewer",
+    "creator_region": "US",
+    "creator_status": "INDEPENDENT",
+    "creator_belonged_shop_id": "7495514739648989419",
+    "creator_bio": "Tech enthusiast sharing the latest gadgets",
+    "creator_contact_email": "creator@example.com",
+    "creator_contact_tiktok": "techreviewer_tiktok",
+    "creator_contact_whatsapp": "+1234567890",
+    "creator_contact_line": "techreviewer_line",
+    "creator_contact_facebook": "techreviewer.fb",
+    "creator_contact_ins": "@techreviewer_insta",
+    "creator_contact_zalo": "techreviewer_zalo",
+    "revenue": 12500.75,
+    "sales_volumn": 150,
+    "unit_price": 83.34,
+    "video_revenue": 7500.25,
+    "live_revenue": 5000.5,
+    "video_views": 250000,
+    "live_views": 180000,
+    "live_gpm": 27.78,
+    "video_gpm": 30,
+    "new_followers": 5000,
+    "video_number": 25,
+    "live_number": 10,
+    "shop_number": 8,
+    "product_number": 45,
+    "creator_followers": "100000",
+    "revenue_trend": [
+      25.1,
+      24.3
+    ],
+    "top3_product_ids": [
+      25.1,
+      24.3
+    ]
+  },
+  "message": "string",
+  "cached": false,
+  "code": "string"
+}
+
+Get creator ranking list
+Retrieve ranking list of creators based on specified criteria and filters.
+
+date_range: window is capped at 30 days. Supports lastDay, last7Day, last30Day, a natural yyyy-MM-dd~yyyy-MM-dd (span ≤ 30 days), or a natural month yyyy-MM.
+
+sort_field.field: revenue (default), revenue_growth_rate, content_views, creator_followers, sales_volumn, video_revenue, live_revenue, creator_id, creator_nickname, creator_handle. Default sort is revenue DESC.
+
+Post
+https://www.kalodata.com/openapi/v1/tiktok/creator/rank
+
+
+Integration Method
+All endpoints use HTTP POST + JSON with secret-key authentication in headers. Common fields: region / language / currency / date_range. You can use fixed request params below for local debugging and mock response preview.
+
+API Rate Limit
+Max
+10
+Requests /10 Second
+Request Parameters
+Field	Type	Description	Example	Required
+region	string	
+Data country code, e.g. US, BR, MX, ID, JP, MY, PH, SG, TH, VN, GB, ES, DE, FR, IT.
+
+US	Yes
+language	string	
+Language for text fields in the response. Currently supports zh-CN, en-US, id-ID, th-TH, vi-VN, es-ES, ja-JP, pt-BR, ko-KR, fr-FR.
+
+en-US	Yes
+currency	string	
+Currency unit for revenue and price fields. Currently supports CNY, USD, IDR, VND, THB, MYR, JPY, PHP, GBP, SGD, MXN, EUR, BRL.
+
+USD	Yes
+date_range	string	
+Date range. Accepts named ranges (lastDay, last7Day, last30Day, last60Day, last90Day, last180Day, last365Day), a natural date range in yyyy-MM-dd~yyyy-MM-dd form, or a natural month yyyy-MM. Some endpoints restrict this set — see the per-endpoint description.
+
+last7Day	Yes
+sort_field	object	
+Sort spec. field accepts any numeric field from the response; type is ASC or DESC. Defaults to {"field":"revenue","type":"DESC"}.
+
+Yes
+field	string	
+Sort field name. Any numeric field returned by the endpoint is supported (e.g. revenue, sales_volumn, revenue_growth_rate).
+
+revenue	No
+type	string	
+Sort direction.
+
+DESC	No
+rank_field	string	
+Legacy shortcut for the sort field name; prefer sort_field. Ignored when sort_field is set.
+
+revenue	No
+asc	boolean	
+Legacy ascending flag paired with rank_field. Default false (DESC).
+
+false	No
+page_size	integer	
+Page size. Maximum 100 records per query. Default 10.
+
+20	No
+page_number	integer	
+Page number, starting at 1.
+
+1	No
+category_ids	array<integer>	
+Deprecated, use category_id_list. List of category IDs to restrict creator revenue.
+
+[700645,223]	No
+category_id_list	string	
+Comma-separated category IDs (preferred over category_ids).
+
+700645,223	No
+shop_id	string	
+Restrict to creators collaborating with the given shop (any video / live / showcase mounting the shop's products with exposure).
+
+7494965300835814281	No
+product_id	string	
+Restrict to creators who have promoted the given product.
+
+1729587769570529799	No
+revenue_range	string	
+Revenue range filter, in the same currency as the request currency. Also supports <100 / >1000 forms.
+
+100-1000	No
+creator_type	string	
+Creator type filter. BELONGED_TO_SELLER = seller's own creator, INDEPENDENT = independent affiliate creator.
+
+INDEPENDENT	No
+followers_range	string	
+Follower count range filter. Also supports <100 / >1000 forms.
+
+1000-10000	No
+engagement_rate	string	
+Engagement rate bucket. LOW = <8%, MEDIUM = 8%-20%, HIGH = >20%.
+
+MEDIUM	No
+keyword	string	
+Keyword for creator search
+
+beauty	No
+need_image	integer	
+Whether main image URL is needed: 0 not needed (default), 1 return official URL, 2 return kalo_data image URL (paid service required)
+
+1	No
+need_category	integer	
+Whether category information is needed (0 = not needed, 1 = needed)
+
+0	No
+need_ter_category	integer	
+Whether ter category information is needed (0 = not needed, 1 = needed)
+
+0	No
+Response Parameters
+Field	Type	Description	Example
+success	boolean	
+data	array<object>	
+creator_id	string	
+Creator ID
+
+6937492675021095937
+creator_nickname	string	
+Creator nickname
+
+Cici Barbar
+creator_handle	string	
+Creator handle name, names with @ prefix are handle names
+
+cici.barbar
+revenue	number	
+Creator transaction amount
+
+2000
+revenue_growth_rate	number	
+Creator transaction amount growth rate
+
+1
+content_views	string	
+Creator content views within the selected time range
+
+1200
+creator_followers	string	
+Creator's follower count, updated daily
+
+100000
+sales_volumn	integer	
+Sales volume
+
+150
+video_revenue	number	
+Video sales revenue
+
+1200.5
+live_revenue	number	
+Live streaming sales revenue
+
+800.25
+category_list	array<string>	
+Top three categories
+
+["Electronics","Fashion","Beauty"]
+category_id_list	array<string>	
+Top three category IDs
+
+["12345","67890","11111"]
+ter_category_list	array<string>	
+Top 3 third categories
+
+["Mules & Clogs","Heels","Slippers"]
+ter_category_id_list	array<string>	
+Top 3 third category IDs
+
+["901896","601396","601405"]
+message	string	
+debug	object	
+cached	boolean	
+code	string	
+API Debug
+Fixed Request Params
+
+
+{
+  "region": "US",
+  "language": "en-US",
+  "currency": "USD",
+  "date_range": "last7Day",
+  "sort_field": {
+    "field": "revenue",
+    "type": "DESC"
+  },
+  "rank_field": "revenue",
+  "asc": false,
+  "page_size": 20,
+  "page_number": 1,
+  "category_ids": [
+    700645,
+    223
+  ],
+  "category_id_list": "700645,223",
+  "shop_id": "7494965300835814281",
+  "product_id": "1729587769570529799",
+  "revenue_range": "100-1000",
+  "creator_type": "INDEPENDENT",
+  "followers_range": "1000-10000",
+  "engagement_rate": "MEDIUM",
+  "keyword": "beauty",
+  "need_image": 1,
+  "need_category": 0,
+  "need_ter_category": 0
+}
+Mock Response (JSON)
+
+
+{
+  "success": false,
+  "data": [
+    {
+      "creator_id": "6937492675021095937",
+      "creator_nickname": "Cici Barbar",
+      "creator_handle": "cici.barbar",
+      "revenue": 2000,
+      "revenue_growth_rate": 1,
+      "content_views": "1200",
+      "creator_followers": "100000",
+      "sales_volumn": 150,
+      "video_revenue": 1200.5,
+      "live_revenue": 800.25,
+      "category_list": [
+        "Electronics",
+        "Fashion",
+        "Beauty"
+      ],
+      "category_id_list": [
+        "12345",
+        "67890",
+        "11111"
+      ],
+      "ter_category_list": [
+        "Mules & Clogs",
+        "Heels",
+        "Slippers"
+      ],
+      "ter_category_id_list": [
+        "901896",
+        "601396",
+        "601405"
+      ]
+    }
+  ],
+  "message": "string",
+  "cached": false,
+  "code": "string"
+}
+
+
+Get category details
+Retrieve detailed information for a specific category.
+
+date_range: only last7Day, last30Day, last90Day, last180Day, last365Day are supported (natural date ranges and months are NOT accepted here).
+
+Post
+https://www.kalodata.com/openapi/v1/tiktok/category/detail
+
+
+Integration Method
+All endpoints use HTTP POST + JSON with secret-key authentication in headers. Common fields: region / language / currency / date_range. You can use fixed request params below for local debugging and mock response preview.
+
+API Rate Limit
+Max
+100
+Requests /10 Second
+Request Parameters
+Field	Type	Description	Example	Required
+region	string	
+Data country code, e.g. US, BR, MX, ID, JP, MY, PH, SG, TH, VN, GB, ES, DE, FR, IT.
+
+US	Yes
+language	string	
+Language for text fields in the response. Currently supports zh-CN, en-US, id-ID, th-TH, vi-VN, es-ES, ja-JP, pt-BR, ko-KR, fr-FR.
+
+en-US	Yes
+currency	string	
+Currency unit for revenue and price fields. Currently supports CNY, USD, IDR, VND, THB, MYR, JPY, PHP, GBP, SGD, MXN, EUR, BRL.
+
+USD	Yes
+date_range	string	
+Date range. Accepts named ranges (lastDay, last7Day, last30Day, last60Day, last90Day, last180Day, last365Day), a natural date range in yyyy-MM-dd~yyyy-MM-dd form, or a natural month yyyy-MM. Some endpoints restrict this set — see the per-endpoint description.
+
+last7Day	Yes
+category_id	string	
+Category ID to query.
+
+601450	Yes
+Response Parameters
+Field	Type	Description	Example
+success	boolean	
+data	object	
+category_id	string	
+Category ID
+
+12345
+category_name	string	
+Category name
+
+Electronics
+revenue	number	
+Category revenue within the selected time range
+
+150000.5
+shop_number	integer	
+Number of shops with product sales records in this category within the selected time range
+
+25
+live_revenue	number	
+Transaction amount for category products through live streaming channels within the selected time range
+
+80000.25
+video_revenue	number	
+Transaction amount for category products through video channels within the selected time range
+
+70000.25
+revenue_growth_rate	number	
+Growth rate of the category within the selected time range
+
+15.5
+average_shop_revenue	number	
+Average revenue of active selling shops within the selected time range
+
+6000.2
+affiliate_revenue	number	
+Order amount for category products through affiliate creator partnerships within the selected time range
+
+45000.75
+self_operate_revenue	number	
+Order amount for category products through shop's own creators within the selected time range
+
+55000.25
+shopping_mall_revenue	number	
+Order amount for category products through shopping mall channels within the selected time range
+
+50000
+revenue_trend	array<number>	
+Category revenue trend within the selected time range
+
+50000
+sale	integer	
+Sales of the category within the selected time range
+
+340
+active_product_number	integer	
+Number of product with product sales records in this category within the selected time range
+
+25
+message	string	
+debug	object	
+cached	boolean	
+code	string	
+API Debug
+Fixed Request Params
+
+
+{
+  "region": "US",
+  "language": "en-US",
+  "currency": "USD",
+  "date_range": "last7Day",
+  "category_id": "601450"
+}
+Mock Response (JSON)
+
+
+{
+  "success": false,
+  "data": {
+    "category_id": "12345",
+    "category_name": "Electronics",
+    "revenue": 150000.5,
+    "shop_number": 25,
+    "live_revenue": 80000.25,
+    "video_revenue": 70000.25,
+    "revenue_growth_rate": 15.5,
+    "average_shop_revenue": 6000.2,
+    "affiliate_revenue": 45000.75,
+    "self_operate_revenue": 55000.25,
+    "shopping_mall_revenue": 50000,
+    "revenue_trend": 50000,
+    "sale": 340,
+    "active_product_number": 25
+  },
+  "message": "string",
+  "cached": false,
+  "code": "string"
+}
+
+Get category ranking list
+Retrieve ranking list of categories based on specified criteria and filters.
+
+date_range: only last7Day, last30Day, last90Day, last180Day, last365Day are supported (natural date ranges and months are NOT accepted here).
+
+sort_field.field: revenue (default), revenue_growth_rate, top3_shop_revenue_ratio, average_revenue, rank, category_id, category_name. Default sort is revenue DESC.
+
+Post
+https://www.kalodata.com/openapi/v1/tiktok/category/rank
+
+
+Integration Method
+All endpoints use HTTP POST + JSON with secret-key authentication in headers. Common fields: region / language / currency / date_range. You can use fixed request params below for local debugging and mock response preview.
+
+API Rate Limit
+Max
+10
+Requests /10 Second
+Request Parameters
+Field	Type	Description	Example	Required
+region	string	
+Data country code, e.g. US, BR, MX, ID, JP, MY, PH, SG, TH, VN, GB, ES, DE, FR, IT.
+
+US	Yes
+language	string	
+Language for text fields in the response. Currently supports zh-CN, en-US, id-ID, th-TH, vi-VN, es-ES, ja-JP, pt-BR, ko-KR, fr-FR.
+
+en-US	Yes
+currency	string	
+Currency unit for revenue and price fields. Currently supports CNY, USD, IDR, VND, THB, MYR, JPY, PHP, GBP, SGD, MXN, EUR, BRL.
+
+USD	Yes
+date_range	string	
+Date range. Accepts named ranges (lastDay, last7Day, last30Day, last60Day, last90Day, last180Day, last365Day), a natural date range in yyyy-MM-dd~yyyy-MM-dd form, or a natural month yyyy-MM. Some endpoints restrict this set — see the per-endpoint description.
+
+last7Day	Yes
+sort_field	object	
+Sort spec. field accepts any numeric field from the response; type is ASC or DESC. Defaults to {"field":"revenue","type":"DESC"}.
+
+Yes
+field	string	
+Sort field name. Any numeric field returned by the endpoint is supported (e.g. revenue, sales_volumn, revenue_growth_rate).
+
+revenue	No
+type	string	
+Sort direction.
+
+DESC	No
+rank_field	string	
+Legacy shortcut for the sort field name; prefer sort_field. Ignored when sort_field is set.
+
+revenue	No
+asc	boolean	
+Legacy ascending flag paired with rank_field. Default false (DESC).
+
+false	No
+page_size	integer	
+Page size. Maximum 100 records per query. Default 10.
+
+20	No
+page_number	integer	
+Page number, starting at 1.
+
+1	No
+category_ids	array<string>	
+Restrict results to the given category IDs and their sub-categories. When omitted, all categories are included.
+
+["601450"]	No
+category_level	integer	
+Category level to return. 1 = top level, 2 = mid level, 3 = leaf level.
+
+1	No
+revenue_range	string	
+Revenue range filter within the selected time period, in the same currency as the request currency. Also supports open-ended forms like <100 or >1000.
+
+100-1000	No
+Response Parameters
+Field	Type	Description	Example
+success	boolean	
+data	array<object>	
+category_id	string	
+Category ID
+
+12345
+category_name	string	
+Category name, returns category name in different languages based on different language parameters
+
+Electronics
+rank	integer	
+Category ranking
+
+3
+revenue	number	
+Total revenue of the category within the selected time range
+
+250000.75
+sale	integer	
+Sales of the category within the selected time range
+
+340
+revenue_growth_rate	number	
+Sales growth rate of the category within the selected time range
+
+25.8
+top3_shop_revenue_ratio	number	
+Revenue ratio of the top 3 revenue-ranked shops in the corresponding category
+
+35.2
+average_revenue	number	
+Average revenue per shop in the category
+
+12500.5
+message	string	
+debug	object	
+cached	boolean	
+code	string	
+API Debug
+Fixed Request Params
+
+
+{
+  "region": "US",
+  "language": "en-US",
+  "currency": "USD",
+  "date_range": "last7Day",
+  "sort_field": {
+    "field": "revenue",
+    "type": "DESC"
+  },
+  "rank_field": "revenue",
+  "asc": false,
+  "page_size": 20,
+  "page_number": 1,
+  "category_ids": [
+    "601450"
+  ],
+  "category_level": 1,
+  "revenue_range": "100-1000"
+}
+Mock Response (JSON)
+
+
+{
+  "success": false,
+  "data": [
+    {
+      "category_id": "12345",
+      "category_name": "Electronics",
+      "rank": 3,
+      "revenue": 250000.75,
+      "sale": 340,
+      "revenue_growth_rate": 25.8,
+      "top3_shop_revenue_ratio": 35.2,
+      "average_revenue": 12500.5
+    }
+  ],
+  "message": "string",
+  "cached": false,
+  "code": "string"
+}

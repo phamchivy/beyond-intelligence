@@ -100,6 +100,25 @@ class SourceSettings(BaseSettings):
     erp_dsn: str = "postgresql://bi:bi@localhost:5432/bi"
 
 
+class KalodataSettings(BaseSettings):
+    """Kalodata Open API -- TikTok Shop analytics, endpoints in kalodata/kalodata-api.txt.
+
+    ``env_file`` is declared here and not only on ``Settings`` because a
+    nested settings class reads its own sources: without it the API key
+    would have to be exported into the environment by hand before every
+    run, while the rest of this file's defaults happen to mask the same
+    gap by being correct for local development.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="KALODATA_", env_file=".env", extra="ignore")
+
+    api_key: SecretStr = SecretStr("")
+    base_url: str = "https://www.kalodata.com/openapi/v1/tiktok"
+    region: str = "US"
+    language: str = "en-US"
+    currency: str = "USD"
+
+
 class ChunkSettings(BaseSettings):
     """Document chunking limits, used by the HybridChunker path."""
 
@@ -159,6 +178,7 @@ class Settings(BaseSettings):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     sources: SourceSettings = Field(default_factory=SourceSettings)
+    kalodata: KalodataSettings = Field(default_factory=KalodataSettings)
     chunk: ChunkSettings = Field(default_factory=ChunkSettings)
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
     quality: QualitySettings = Field(default_factory=QualitySettings)
