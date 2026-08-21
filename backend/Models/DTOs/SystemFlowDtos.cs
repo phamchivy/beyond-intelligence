@@ -26,7 +26,7 @@ public class SubmitBriefResponse
     public Guid TaskId { get; set; }
     public Guid StoryboardId { get; set; }
     public int RevisionNumber { get; set; }
-    public string StoryboardText { get; set; } = default!;
+    public object Plan { get; set; } = default!;
     public string TaskStatus { get; set; } = "storyboard_review";
 }
 
@@ -109,8 +109,8 @@ public class AgentStoryboardResponse
     [JsonPropertyName("revision_number")]
     public int RevisionNumber { get; set; }
 
-    [JsonPropertyName("storyboard_text")]
-    public string StoryboardText { get; set; } = string.Empty;
+    [JsonPropertyName("plan")]
+    public object Plan { get; set; } = default!;
 }
 
 // POST /agent/render

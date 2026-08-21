@@ -11,11 +11,13 @@ public class ReviewStoryboardEndpoint : Endpoint<StoryboardReviewRequest>
 {
     private readonly IAgentPodClient _agentPod;
     private readonly IConfiguration _config;
+    private readonly ILogger<ReviewStoryboardEndpoint> _logger;
 
-    public ReviewStoryboardEndpoint(IAgentPodClient agentPod, IConfiguration config)
+    public ReviewStoryboardEndpoint(IAgentPodClient agentPod, IConfiguration config, ILogger<ReviewStoryboardEndpoint> logger)
     {
         _agentPod = agentPod;
         _config = config;
+        _logger = logger;
     }
 
     public override void Configure()
@@ -30,16 +32,24 @@ public class ReviewStoryboardEndpoint : Endpoint<StoryboardReviewRequest>
         await using var conn = new NpgsqlConnection(_config.GetConnectionString("DefaultConnection"));
         await conn.OpenAsync(ct);
 
-        // Nhánh 1: Approved -> Trigger Render[cite: 9]
-        if (req.Decision == "approved")
+        var decision = (req.Decision ?? "approved").Trim().ToLower();
+
+        // Nhánh 1: Approved -> Trigger Render
+        if (decision == "approved")
         {
             await conn.ExecuteAsync(@"
                 UPDATE storyboards SET review_status = 'approved', reviewed_at = now() WHERE id = @StoryboardId;
                 UPDATE tasks SET status = 'render_pending' WHERE id = @TaskId;", req);
 
             var renderTrigger = await _agentPod.TriggerRenderAsync(req.TaskId, ct);
+            _logger.LogInformation(">>> [ReviewStoryboard] TriggerRenderAsync thành công. TaskId: {TaskId} | AgentJobId: {AgentJobId} | Status: {Status}", 
+                req.TaskId, renderTrigger.RenderJobId, renderTrigger.Status);
 
-            var renderJobId = Guid.NewGuid();
+            // Dùng trực tiếp ID từ Agent trả về (parse sang GUID để khớp kiểu cột id)
+            var renderJobId = Guid.TryParse(renderTrigger.RenderJobId, out var parsedGuid) 
+                ? parsedGuid 
+                : Guid.NewGuid();
+
             await conn.ExecuteAsync(@"
                 INSERT INTO render_jobs (id, task_id, storyboard_id, agent_job_id, status)
                 VALUES (@Id, @TaskId, @StoryboardId, @AgentJobId, @Status);
@@ -52,13 +62,17 @@ public class ReviewStoryboardEndpoint : Endpoint<StoryboardReviewRequest>
                 Status = renderTrigger.Status
             });
 
-            var approvedRes = new { status = "render_processing", render_job_id = renderJobId };
+            var approvedRes = new 
+            { 
+                status = "render_processing", 
+                render_job_id = renderTrigger.RenderJobId 
+            };
             await HttpContext.Response.WriteAsJsonAsync(approvedRes, cancellationToken: ct);
             return;
         }
 
-        // Nhánh 2: Needs Revision -> Sửa storyboard qua API Revise của Agent[cite: 9]
-        if (req.Decision == "needs_revision")
+        // Nhánh 2: Needs Revision -> Sửa storyboard qua API Revise của Agent
+        if (decision == "needs_revision")
         {
             var currentCount = await conn.ExecuteScalarAsync<int>(
                 "SELECT COUNT(*) FROM storyboards WHERE task_id = @TaskId", new { req.TaskId });
@@ -88,7 +102,7 @@ public class ReviewStoryboardEndpoint : Endpoint<StoryboardReviewRequest>
                 Id = newStoryboardId,
                 req.TaskId,
                 revisedStoryboard.RevisionNumber,
-                Plan = JsonSerializer.Serialize(new { text = revisedStoryboard.StoryboardText })
+                Plan = JsonSerializer.Serialize(revisedStoryboard.Plan)
             });
 
             var revisionRes = new
@@ -96,13 +110,13 @@ public class ReviewStoryboardEndpoint : Endpoint<StoryboardReviewRequest>
                 status = "storyboard_review",
                 storyboard_id = newStoryboardId,
                 revision_number = revisedStoryboard.RevisionNumber,
-                storyboard_text = revisedStoryboard.StoryboardText
+                plan = revisedStoryboard.Plan
             };
             await HttpContext.Response.WriteAsJsonAsync(revisionRes, cancellationToken: ct);
             return;
         }
 
-        // Nhánh 3: Rejected[cite: 9]
+        // Nhánh 3: Rejected
         await conn.ExecuteAsync(@"
             UPDATE storyboards SET review_status = 'rejected', reviewed_at = now() WHERE id = @StoryboardId;
             UPDATE tasks SET status = 'cancelled' WHERE id = @TaskId;", req);

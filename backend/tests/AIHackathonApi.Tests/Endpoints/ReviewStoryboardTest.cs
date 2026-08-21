@@ -90,14 +90,15 @@ public class ReviewStoryboardEndpointTests
             {
                 TaskId = taskId.ToString(),
                 RevisionNumber = 2,
-                StoryboardText = "Hook: Mở đầu sôi động!\nScene 1: Cận cảnh sản phẩm\nCTA: Mua ngay"
+                Plan = "Hook: Mở đầu sôi động!\nScene 1: Cận cảnh sản phẩm\nCTA: Mua ngay"
             });
 
         var res = await _mockAgentPod.Object.ReviseStoryboardAsync(taskId, feedback, CancellationToken.None);
 
         res.Should().NotBeNull();
         res.RevisionNumber.Should().Be(2);
-        res.StoryboardText.Should().Contain("Mở đầu sôi động");
+        res.Plan.Should().NotBeNull();
+        res.Plan.ToString().Should().Contain("Mở đầu sôi động");
     }
 
     [Fact]

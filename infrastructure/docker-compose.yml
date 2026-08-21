@@ -1,6 +1,21 @@
 services:
+  frontend:
+    image: spemmmer/fe-beyond-intelligence:demo-v1.0
+    container_name: beyond_frontend
+    ports: ["3000:3000"]
+    environment:
+      - NUXT_PUBLIC_APP_NAME="Beyond Models"
+      - NUXT_PUBLIC_APP_DESCRIPTION="AI Short Video Ads Generator"
+      - NUXT_PUBLIC_API_BASE="http://backend:8000/api/v1"
+      - NUXT_PUBLIC_DEMO_MODE="false"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
-    image: duytrong298/be-beyond-intelligence:demo-v1.0
+    image: duytrong298/be-beyond-intelligence:demo-v1.1
     container_name: beyond_backend
     ports: ["8000:8000"]
     environment:
@@ -11,6 +26,19 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+  ai:
+    image: phamchivy/agent-beyond-intelligence:demo-v1.1
+    container_name: beyond_agent
+    ports: ["8001:8001"]
+    env_file:
+      - ../agent/.env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+volumes:
+  postgres_data:
 networks:
   default:
     name: beyond-intelligence-net

@@ -121,7 +121,7 @@ public class SubmitBriefEndpoint : Endpoint<SubmitBriefFormRequest>
             Id = storyboardId,
             TaskId = taskId,
             agentRes.RevisionNumber,
-            Plan = JsonSerializer.Serialize(new { text = agentRes.StoryboardText })
+            Plan = JsonSerializer.Serialize(agentRes.Plan)
         });
 
         // 7. Cập nhật task -> storyboard_review[cite: 8]
@@ -132,7 +132,7 @@ public class SubmitBriefEndpoint : Endpoint<SubmitBriefFormRequest>
             TaskId = taskId,
             StoryboardId = storyboardId,
             RevisionNumber = agentRes.RevisionNumber,
-            StoryboardText = agentRes.StoryboardText,
+            Plan = agentRes.Plan,
             TaskStatus = "storyboard_review"
         };
 

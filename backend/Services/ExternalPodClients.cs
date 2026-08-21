@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using AIHackathonApi.Models.DTOs;
@@ -107,47 +108,42 @@ public class AgentPodClient : IAgentPodClient
 
     public async Task<AgentStoryboardResponse> GenerateStoryboardAsync(AgentStoryboardRequest req, CancellationToken ct)
     {
-        try
+        using var response = await _http.PostAsJsonAsync("/agent/reasoning/storyboard", req, ct);
+
+        if (!response.IsSuccessStatusCode)
         {
-            var res = await _http.PostAsJsonAsync("/agent/reasoning/storyboard", req, ct);
-            res.EnsureSuccessStatusCode();
-            return (await res.Content.ReadFromJsonAsync<AgentStoryboardResponse>(cancellationToken: ct))!;
+            var error = await response.Content.ReadAsStringAsync(ct);
+            _logger.LogError("Agent Pod Error {Status}: {Detail}", response.StatusCode, error);
+            throw new HttpRequestException($"Agent Pod Error ({(int)response.StatusCode}): {error}");
         }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Agent Pod chưa sẵn sàng, kích hoạt Mock Storyboard.");
-            return new AgentStoryboardResponse
-            {
-                TaskId = req.TaskId,
-                RevisionNumber = 1,
-                StoryboardText = "Hook: Bí quyết chống ồn đỉnh cao cho cả ngày năng động!\nScene 1: Cận cảnh sản phẩm ANC 35dB\nScene 2: Trải nghiệm nghe nhạc ngoài phố với pin 30 giờ\nCTA: Mua ngay hôm nay - Giảm 30%!"
-            };
-        }
+
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var result = await response.Content.ReadFromJsonAsync<AgentStoryboardResponse>(options, ct);
+
+        return result ?? throw new InvalidOperationException("Agent Pod trả về dữ liệu rỗng.");
     }
 
     public async Task<AgentStoryboardResponse> ReviseStoryboardAsync(Guid taskId, string feedback, CancellationToken ct)
     {
-        try
+        var payload = new AgentReviseStoryboardRequest
         {
-            var payload = new AgentReviseStoryboardRequest
-            {
-                TaskId = taskId.ToString(),
-                Feedback = feedback
-            };
-            var res = await _http.PostAsJsonAsync("/agent/reasoning/storyboard/revise", payload, ct);
-            res.EnsureSuccessStatusCode();
-            return (await res.Content.ReadFromJsonAsync<AgentStoryboardResponse>(cancellationToken: ct))!;
-        }
-        catch (Exception ex)
+            TaskId = taskId.ToString(),
+            Feedback = feedback
+        };
+
+        using var response = await _http.PostAsJsonAsync("/agent/reasoning/storyboard/revise", payload, ct);
+
+        if (!response.IsSuccessStatusCode)
         {
-            _logger.LogWarning(ex, "Agent Pod Revise chưa sẵn sàng, kích hoạt Mock Revision.");
-            return new AgentStoryboardResponse
-            {
-                TaskId = taskId.ToString(),
-                RevisionNumber = 2,
-                StoryboardText = $"[Đã cập nhật theo góp ý: {feedback}]\nHook: Âm thanh đỉnh cao cùng thiết kế thời thượng!\nScene: Cận cảnh hộp tai nghe cao cấp\nCTA: Sở hữu ngay!"
-            };
+            var errorDetail = await response.Content.ReadAsStringAsync(ct);
+            _logger.LogError("Agent Pod Revise trả về lỗi {StatusCode}: {ErrorDetail}", response.StatusCode, errorDetail);
+            throw new HttpRequestException($"Agent Pod Revise Error ({(int)response.StatusCode}): {errorDetail}");
         }
+
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var result = await response.Content.ReadFromJsonAsync<AgentStoryboardResponse>(options, cancellationToken: ct);
+
+        return result ?? throw new InvalidOperationException("Dữ liệu Storyboard cập nhật từ Agent Pod rỗng.");
     }
 
     public async Task<AgentRenderTriggerResponse> TriggerRenderAsync(Guid taskId, CancellationToken ct)
