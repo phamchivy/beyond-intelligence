@@ -21,17 +21,17 @@ from enum import Enum
 
 from config.settings import settings
 from domain.entities.agent_state import AgentState
-from domain.policies.retry_policy import NonRetryableError, RetryableError, RetryPolicy
+from domain.policies.retry_policy import RetryPolicy
 from domain.ports.llm import (
     LLM,
     LLMMessage,
     LLMRequest,
-    LLMResponse,
     MessageRole,
     ToolDefinition,
 )
 from domain.value_objects.token_usage import TokenUsage
-from observability.logging import get_logger, log_duration, log_event
+from observability.logging import get_logger, log_event
+from application.reasoning.llm_call import call_llm_with_retry
 
 logger = get_logger(__name__)
 
@@ -86,7 +86,7 @@ class ReasoningService:
         request = self._build_request(state, available_tools)
         if settings.observability.log_prompts:
             log_event(logger, "debug", "llm_request_built", messages=[m.content for m in request.messages])
-        response = await self._call_with_retry(request)
+        response = await call_llm_with_retry(self._llm, request, self._retry_policy, logger)
 
         kind = (
             ReasoningStepKind.TOOL_CALL
@@ -120,42 +120,3 @@ class ReasoningService:
             messages=tuple(messages),
             tools=available_tools,
         )
-
-    async def _call_with_retry(self, request: LLMRequest) -> LLMResponse:
-        attempt = 0
-        last_error: Exception | None = None
-
-        while True:
-            attempt += 1
-            try:
-                with log_duration(logger, "llm_call_completed", attempt=attempt):
-                    response = await self._llm.generate(request)
-                log_event(
-                    logger,
-                    "info",
-                    "llm_call_result",
-                    model=response.model,
-                    prompt_tokens=response.token_usage.prompt_tokens,
-                    completion_tokens=response.token_usage.completion_tokens,
-                    finish_reason=response.finish_reason,
-                    tool_call_count=len(response.tool_calls),
-                )
-                return response
-            except (RetryableError, NonRetryableError) as exc:
-                last_error = exc
-                log_event(
-                    logger,
-                    "warning",
-                    "llm_call_failed",
-                    attempt=attempt,
-                    error_type=type(exc).__name__,
-                    error=str(exc),
-                )
-                if not self._retry_policy.should_retry(attempt, exc):
-                    log_event(logger, "error", "llm_call_gave_up", attempt=attempt)
-                    raise
-                delay = self._retry_policy.next_delay_seconds(attempt)
-                log_event(logger, "info", "llm_call_retrying", attempt=attempt, delay_seconds=delay)
-                continue
-
-        raise last_error  # khong bao gio toi day, giu de type-checker yen tam

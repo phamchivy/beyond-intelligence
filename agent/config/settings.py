@@ -264,6 +264,7 @@ class Settings(_BaseAppSettings):
     # Application behavior chung, khong thuoc rieng nhom nao o tren.
     max_iterations: int = Field(default=10, ge=1, le=100)
     retrieval_top_k: int = Field(default=5, ge=1, le=50)
+    max_storyboard_revisions: int = Field(default=3, ge=1, le=10)
 
     def is_production(self) -> bool:
         return self.environment == Environment.PRODUCTION
