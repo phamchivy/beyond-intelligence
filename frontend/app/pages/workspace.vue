@@ -285,14 +285,10 @@ const startRenderPolling = (jobId: string) => {
         renderErrorMsg.value = statusRes.error?.message || 'Render video thất bại từ AI Pod.'
         clearInterval(pollingInterval)
       }
-    } catch {
-      // Demo fallback auto-complete
-      if (renderProgress.value >= 85) {
-        renderProgress.value = 100
-        renderVideoUrl.value = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'
-        flowState.value = 'completed'
-        clearInterval(pollingInterval)
-      }
+    } catch (err: any) {
+      flowState.value = 'failed'
+      renderErrorMsg.value = err?.message || 'Có lỗi khi kiểm tra tiến trình render.'
+      clearInterval(pollingInterval)
     }
   }, 2200)
 }
