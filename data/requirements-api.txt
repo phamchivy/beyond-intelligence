@@ -1,0 +1,15 @@
+# Runtime deps for the FastAPI edge (api.py) only -- not the Dagster
+# pipeline, ingestion scripts, or tests, which use the full requirements.txt.
+# Keep this in sync with api.py's actual import graph (lib/db.py, lib/delta.py,
+# lib/embedding.py, lib/rerank.py, lib/settings.py, lib/storyboard.py) --
+# nothing here should be added "just in case".
+
+pydantic>=2.13
+pydantic-settings>=2.15
+pyarrow>=25.0
+deltalake>=1.0
+psycopg[binary]>=3.3
+pgvector>=0.5
+fastembed>=0.8
+fastapi>=0.115
+uvicorn[standard]>=0.32

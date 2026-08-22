@@ -2,10 +2,133 @@
 
 > The candidates considered for each category of the `data/` layer, what each is genuinely good and bad at, and which one was chosen. This is a decision record: it exists so nobody re-opens a settled question under time pressure, and so a future reader can tell whether a decision was reasoned or inherited.
 
-**Version:** 1.0
-**Date:** 12/08/2026
-**Companion document:** [data-architecture.md](data-architecture.md) — the architecture these tools implement
-**Versions verified against PyPI:** 12/08/2026 (see §14)
+**Version:** 1.1
+**Date:** 18/08/2026
+**Companion documents:** [data-architecture.md](data-architecture.md) — the architecture these tools implement · [implementation-plan.md](implementation-plan.md) — the build order
+**Versions verified against PyPI:** 12/08/2026 for the original table; the media and serving packages added in §14 are **unverified and must be checked before pinning**
+
+**Changes in 1.1.** Four new categories, all forced by media becoming a first-class source type: decoding (§15), transcription (§16), frame understanding (§17) and the serving API framework (§18). §2, §12, §13 and §14 are updated to match. No decision from 1.0 was reversed.
+
+---
+
+## Reversals recorded in architecture 3.0
+
+This document exists so a settled question is not silently re-opened. Version 3.0
+of [data-architecture.md](data-architecture.md) re-opens two, and both are
+recorded here as reversals rather than quietly applied — the same way §11 records
+the structlog reversal.
+
+### Reversal 1 — dbt is removed (§6)
+
+§6 chose `dbt-core` over SQLMesh and raw SQL, on team fluency under a short
+timeline, with dbt tests doubling as §10's quality gates and the manifest
+supplying §13's SQL lineage. **Withdrawn.** SQL transformations are now plain
+`.sql` files executed by DuckDB, with every dbt responsibility moved to something
+already present:
+
+| §6 relied on dbt for | 3.0 uses |
+| --- | --- |
+| `ref()` ordering | Dagster asset `deps=[...]` |
+| model contracts | Delta schema enforcement on write, plus Pandera |
+| dbt tests as quality gates (§8, §10) | Pandera on the Arrow result, plus `@asset_check` |
+| the manifest, for lineage (§11) | the Dagster asset graph, plus Delta `history()` |
+
+**Because** six datasets do not need a modelling framework: the toolchain
+(`dbt-core`, `dbt-duckdb`, `dagster-dbt`, `dbt_project.yml`, `profiles.yml`,
+`schema.yml`) costs more to set up and learn than eight lines of Python running
+`.sql` files. **What is genuinely lost:** Jinja macros, column-level lineage, and
+tests running inline with their models. §6's own closing line anticipated this —
+*"one raw SQL model is fine until there is a second one to depend on it"* — and
+architecture §16 names the trigger to reverse back: roughly a dozen models, or
+real macro reuse.
+
+### Reversal 2 — Delta Lake replaces plain Parquet (§7, §13)
+
+§7 chose plain Parquet partitions with **Iceberg** as the designated upgrade, and
+§13 rejected **Delta Lake** outright. **Both withdrawn.** Delta Lake, via
+`deltalake` (delta-rs), is now the table format for every layer.
+
+§7's reasoning was that nothing needed ACID, `MERGE` or time travel — one writer
+per dataset, Bronze append-only, Silver overwriting whole partitions, Gold
+`MERGE`ing into Postgres which already has transactions. **That reasoning had a
+gap:** the media pipeline's unit of work is one asset inside a shared partition,
+which is a row-level upsert wearing a disguise. Version 2.0 worked around it with
+a per-asset object and a rule never to `delete_prefix` a date; 3.0 deletes the
+workaround and uses `MERGE`.
+
+Delta over Iceberg, on the two criteria §7 itself set:
+
+| | Delta (delta-rs) | Iceberg (pyiceberg) |
+| --- | --- | --- |
+| Criterion 1, lightweight | a Python/Rust library, **no catalog service** | needs a REST catalog — a third container in the demo path |
+| Criterion 7, no JVM | Rust and Python | Rust and Python |
+| Reads from DuckDB | `delta_scan` | `iceberg_scan` |
+| Writes from Polars | `write_delta`, first-class | via pyiceberg, less direct |
+
+**What Delta buys, stated accurately:** row-level `MERGE`, atomic single-commit
+writes, schema enforcement, and time travel. **What it does not buy here:**
+multi-writer ACID. Polars writes `asset_artifact` and `document_chunk`; DuckDB
+writes `stg_*` and the marts — different tables, one writer each. Neither this
+document nor the architecture claims otherwise.
+
+§7's flagged one-way door survives intact: the path layout was fixed up front
+precisely so a table format could be adopted later as a metadata operation. That
+is what made this reversal cheap, and it is the strongest evidence in this
+document that recording a one-way door early pays off.
+
+**Everything else in §7 stands** — Parquet + zstd is still the file format
+underneath Delta, and object storage is still MinIO locally, S3-compatible in
+cloud.
+
+### Consequences for the pins (§14)
+
+| Change | Package |
+| --- | --- |
+| Removed | `dbt-core`, `dbt-duckdb`, `dagster-dbt` |
+| Added | `deltalake` (delta-rs), and dlt's `deltalake` extra |
+| Now actually used | `dagster-dlt`, `dagster-duckdb` — pinned since 1.1, unused until 2.0 |
+| Promoted from anticipated to direct | `fastexcel`, for the Excel gap §4 documents |
+
+The unverified-package discipline of §14 now also covers dlt's Delta table format,
+DuckDB's `delta_scan`, and `DeltaTable.merge`. All three are checked by
+[implementation-plan.md](implementation-plan.md) §10, each with a named fallback.
+
+---
+
+## Note for readers of architecture 2.0
+
+[data-architecture.md](data-architecture.md) reached version 2.0 by removing the
+ports-and-adapters layer this document was written against. **No tool choice below
+was reversed by that change** — Dagster, dlt, Polars, DuckDB, dbt, Pandera,
+Pydantic, Docling, fastembed, pgvector, FastAPI, `imageio-ffmpeg` and Gemini were
+all still the selected tools, for the reasons given here. Only the code wrapped
+around them was gone. (dbt and the table format were then reversed in 3.0, above.)
+
+What *is* affected is **criterion 6, "swappable behind a port"** (§1), and the
+passages that lean on it. Read those as making a claim about *narrow
+interfaces*, not about `Protocol` classes specifically:
+
+| Where | Reads as, under 2.0 |
+| --- | --- |
+| §1 criterion 6, and "criterion 6 is the one that lowers the cost of being wrong" | Retired as a criterion. What made these decisions cheap to reverse was that each tool is reached from few places — a property of the tool, not of a wrapper around it |
+| §4 "Sling … cannot sit behind a Python port cleanly" | Still disqualifying: a Go binary cannot be a dlt source or a Dagster asset either |
+| §4 "dlt … sits behind a `Source` port" · §7 "`ObjectStore` port means even fsspec is replaceable" · §8 "a `Validator` adapter can call" · §9 "the same `DocumentParser` port" · §10 "an `Embedder` port" | The tool is now called directly. The *replaceability* claim survives, because each is used from one or two files |
+| §11 "the ports in §6 only pay off if `Protocol` conformance is actually checked" | The argument for mypy/pyright is weaker now. Type checking is still worth having; it is no longer load-bearing |
+| §12 the port inventory, and "most decisions above are cheap to reverse because §6's ports confine each tool to one adapter" | The three genuinely expensive decisions in §12 are unchanged: the object-storage path layout, Postgres as the serving contract, and media understood as text rather than pixels |
+
+§12 already contained the argument that 2.0 acted on, about the one component
+that never had a port:
+
+> "Media decoding is cheap to reverse despite having no port … **this is the
+> case that shows a `Protocol` was never what made a decision reversible — a
+> narrow interface did, and two functions are narrower than a protocol.**"
+
+Two additions to note. **The three `dagster-*` integration packages pinned in
+§14** — `dagster-dlt`, `dagster-dbt`, `dagster-duckdb` — are now actually used;
+1.1 pinned them and then hand-rolled what they provide. And **`fastexcel`** (§14)
+is now a direct dependency rather than an anticipated one, because the Excel gap
+§4 documents is filled by a Polars transformer inside dlt rather than by a
+separate adapter.
 
 ---
 
@@ -45,13 +168,17 @@ Two more come from the project's own architecture standard:
 | Frame contracts | **Pandera** | Great Expectations | Code-first schemas that read like Pydantic, with a first-class Polars backend |
 | Quality gating | **Dagster asset checks** | Soda Core | The gate belongs with the asset, visible in the same UI, with no second tool |
 | Document parsing | **Docling** | `unstructured` | Fully local, layout- and table-aware, with its own chunkers; permissive licence |
+| Media decoding | **`imageio-ffmpeg`** | `apt-get install ffmpeg` | A pip-installed static binary — no apt layer, no root, no image bloat |
+| Transcription | **Gemini audio** | `faster-whisper` | No local weights and no torch; the network dependency is paid down by the cache, not by a model |
+| Frame understanding | **one batched VLM call** | CLIP + a separate OCR | Caption, on-screen text and structured signals in a single request; deletes an entire pipeline stage |
+| Serving API | **FastAPI + uvicorn** | Litestar | Matches the other three pods; its generated `/docs` is how the pods keep schemas in sync |
 | Embeddings | **fastembed** | sentence-transformers | ONNX, no PyTorch, fast on CPU, multilingual models available |
 | Vector + lexical search | **Postgres + pgvector + pg_trgm** | Qdrant | One store instead of two, transactionally consistent with Gold, and .NET can read it with SQL |
 | Object storage | **MinIO** → S3/R2/GCS via `fsspec` | direct boto3 | One adapter covers local and every cloud |
 | File format | **Parquet + zstd** | Avro | Columnar with pushdown in every engine here |
 | Table format | **plain Parquet now** | Iceberg | Nothing yet needs ACID, `MERGE` or time travel — see §12 |
 | Evaluation | **JSONL in git → asset → scikit-learn → report** | promptfoo | Full control over metrics, and reproducibility comes from being an asset |
-| Logging | **structlog** | stdlib `logging` + JSON formatter | Structured events are the default rather than something to remember |
+| Logging | **stdlib `logging` + JSON formatter**, mirroring `agent/` | structlog | The agent's `log_event(**fields)` already forces structured fields; zero dependencies and one log shape across both pods (§11, reversed) |
 | Packaging | **uv** + **Ruff** | Poetry + Black + Flake8 | One fast tool for dependencies, one for lint and format |
 | Config | **pydantic-settings** | dynaconf | Typed, validated at startup, matches the agent layer |
 
@@ -499,7 +626,17 @@ Keeping the labels as JSONL in git is the load-bearing decision. Labels are sour
 | **stdlib `logging` + JSON formatter** | No dependency | Structured fields require discipline every single call; `extra={}` is easy to forget |
 | **loguru** | The nicest ergonomics | Less structured-first; a less standard choice for production JSON logs |
 
-**Chosen: structlog.** The architecture's §13 mandates a fixed set of fields on every event. structlog makes that the path of least resistance, whereas stdlib `logging` makes it something to remember at each call site. Output is JSON to stdout — collection is the environment's job.
+**Chosen: structlog — reversed in 1.1. See below.**
+
+The original argument: the architecture's §13 mandates a fixed set of fields on every event. structlog makes that the path of least resistance, whereas stdlib `logging` makes it something to remember at each call site. Output is JSON to stdout — collection is the environment's job.
+
+> **Reversal, 18/08/2026 — mirror `agent/observability/logging.py` instead.**
+>
+> The argument above assumed stdlib `logging` leaves structured fields to discipline at each call site. That turned out to be false *for this repository*: `agent/` already ships an 83-line module — stdlib `logging` plus a JSON formatter — exposing `get_logger(name)`, `log_event(logger, level, event, **fields)` and a `log_duration` context manager. `log_event`'s signature makes `**fields` the only way to log anything, so the benefit structlog was chosen for is already obtained, with no dependency.
+>
+> Two further reasons decide it. The two Python pods emit **identical log shapes**, which matters when correlating a request across them. And the module is already proven in this codebase rather than needing a configuration session.
+>
+> Recorded here rather than silently changed, so nobody re-opens the question. The implementation is specified in [implementation-plan.md](implementation-plan.md) §8.1 and §16.22.
 
 Metrics and tracing stay as interfaces only (`observability/`) until there is somewhere to send them; Prometheus, Grafana and OpenTelemetry are named in §17 as the upgrade.
 
@@ -526,10 +663,13 @@ Most decisions above are cheap to reverse because §6's ports confine each tool 
 | **Object-storage partition layout** | Bronze is append-only and never rewritten, so every historical file keeps whatever layout it was written with. Changing the scheme means rewriting history or maintaining two readers. | §15 fixes the convention before the first byte lands, and chooses a layout Iceberg can adopt as a metadata operation |
 | **Postgres as the serving contract** | The .NET backend will build against `api.v1_*`. Moving to an HTTP data service later means changing another team's code. | §11's versioned views make the *shape* evolvable even though the *mechanism* is fixed |
 | **No table format initially** | Adopting Iceberg later means migrating existing data. | The partition layout above is chosen to make that migration cheap, and §17 records the trigger so the decision gets revisited deliberately |
+| **Media understood as text, not pixels** | Every downstream artifact — chunks, embeddings, contracts, Gold columns — is derived from captions. Adopting visual embeddings later means a second vector space and re-deriving everything that assumed text. | The Index is rebuildable from Silver and `Embedder` is a port, so the *mechanism* is one adapter and one rebuild. What is expensive is the accumulated Gold modelling built on caption-shaped columns |
 
 ### Cheap to reverse — all behind a port
 
-Orchestrator (assets are thin callers, §2) · embedder (`Embedder`, one adapter + a rebuild) · document parser (`DocumentParser`, dispatched by `supports()`) · vector store (`Retriever`) · validator (`Validator`) · object-storage backend (`ObjectStore`, a URL change) · compute engine (confined to `application/`).
+Orchestrator (assets are thin callers, §2) · embedder (`Embedder`, one adapter + a rebuild) · document parser (`DocumentParser`, dispatched by `supports()`) · transcriber (`Transcriber`, one adapter + a cache invalidation) · captioner (`FrameCaptioner`, likewise) · vector store (`Retriever`) · validator (`Validator`) · object-storage backend (`ObjectStore`, a URL change) · compute engine (confined to `application/`).
+
+**Media decoding is cheap to reverse despite having no port.** Swapping `imageio-ffmpeg` for apt-installed ffmpeg or PyAV changes one file of plain functions and no call site, because the functions return paths. This is the case that shows a `Protocol` was never what made a decision reversible — a narrow interface did, and two functions are narrower than a protocol.
 
 **This asymmetry is the point of the architecture.** The three expensive decisions got argued about; the rest can be changed by whoever needs to change them.
 
@@ -561,6 +701,15 @@ Each of these was considered and set aside. Recorded so the question does not ge
 | **Confluent Schema Registry** | A registry is for streaming producers and consumers. Contracts here live in git, which is better for a batch platform |
 | **SQLMesh** | Technically ahead of dbt on lineage and environments, but loses on team fluency and recognisability today |
 | **DataHub / OpenMetadata** | A catalog for many teams and many tools. Dagster's asset graph plus dbt's manifest cover a single-team platform |
+| **CLIP and multimodal embeddings** | Produces vectors where the agent layer needs words, and buys a second vector space plus a torch dependency. §17 above; the trigger to revisit is an eval, not an intuition |
+| **tesseract** | Weak precisely where this platform's text lives — stylised, low-contrast social-video overlays, in Vietnamese. A VLM absorbs the stage for free |
+| **PaddleOCR** | Better than tesseract, but a deep-learning runtime for a capability already covered by a call that is being made anyway |
+| **PyAV** | A C-extension wheel matrix for a job that is two `subprocess` calls. Fails at import time on the platform you did not test |
+| **moviepy** | An editing library used as an extraction library; slower and larger than the requirement |
+| **`apt-get install ffmpeg`** | ~250 MB and an apt layer on a slim image, for codec coverage this workload does not need. The static wheel is the same tool at a third of the size |
+| **Docling's `asr` extra for media** | Would unify document and media parsing behind one dependency, which is genuinely appealing — but it drags torch in, taking the image past 4 GB and the build past half an hour |
+| **A queue for asset extraction** | Celery, ARQ or a broker for a call that finishes in seconds and fits the caller's existing timeout. §17 of the architecture names the trigger; until then it is a component that can fail during a demo and buys nothing |
+| **Litestar** | A well-designed framework, rejected only because the other pods run FastAPI and consistency wins here |
 
 ---
 
@@ -614,3 +763,198 @@ These were checked rather than recalled, because the architecture depends on the
 | Docling provides `HybridChunker` (`from docling.chunking import HybridChunker`) | ✅ confirmed |
 | Docling input formats include PDF, DOCX/XLSX/PPTX, ODF, EPUB, HTML, Markdown, CSV, images | ✅ confirmed |
 | Postgres has **no** Vietnamese full-text search configuration | ⚠️ true — the limitation documented in §12.2 of the architecture |
+
+### Media and serving packages — added in 1.1, NOT yet verified
+
+These have not been checked against PyPI. **Verify each before pinning**, and do it early: a wheel that does not exist for Python 3.12 is the kind of thing that costs an evening.
+
+| Package | Needed for | What to check |
+|---|---|---|
+| `imageio-ffmpeg` | frame sampling, audio extraction (§15) | that `get_ffmpeg_exe()` returns a working binary on Linux x86-64, and that the wheel is not source-only |
+| `google-genai` | transcription and captioning (§16, §17) | already a dependency of `agent/` at `>=1.0` — match the version, and confirm inline image parts work |
+| `fastapi` · `uvicorn[standard]` | the serving API (§18) | nothing unusual; pin both |
+| `python-multipart` | only if the API ever accepts an upload directly | probably unnecessary — the architecture passes paths, not bytes |
+| `Pillow` | frame resizing if ffmpeg's scaler is not enough | likely unnecessary; do not add speculatively |
+| `imagehash` | perceptual dedupe | **deferred** — do not install until §17 of the architecture triggers it |
+
+---
+
+## 15. Media decoding
+
+Extracting frames and an audio track from a video file. Purely mechanical work with one correct answer per input, which is why the architecture gives it plain functions rather than a port ([data-architecture.md](data-architecture.md) §6).
+
+### Candidates
+
+**`imageio-ffmpeg`**
+
+| Good at | Bad at |
+|---|---|
+| Ships a statically linked ffmpeg binary inside the wheel — `pip install` and it is there | Ships `ffmpeg` but **not `ffprobe`**, so metadata inspection needs another route |
+| No `apt-get`, no root, no system package layer in the image | A pinned ffmpeg build; you take the codecs it was compiled with |
+| Roughly 70 MB, against ~250 MB for the apt route | A thin wrapper, so you drive it with `subprocess` yourself |
+| Works identically on a laptop and in a slim container | |
+
+**`apt-get install ffmpeg`**
+
+| Good at | Bad at |
+|---|---|
+| The real thing, every codec, the version the distribution ships | ~250 MB plus an apt layer on `python:3.12-slim`, and a longer build |
+| What every ffmpeg answer on the internet assumes | Requires root at build time; a second package manager in the Dockerfile |
+| | The version differs between a developer's laptop and the image |
+
+**PyAV**
+
+| Good at | Bad at |
+|---|---|
+| Real Python bindings to libav — frame-accurate access without shelling out | A C-extension wheel matrix; when it fails it fails at import time on a specific platform |
+| No subprocess, no temporary files | A heavier API than "give me eight JPEGs"; more code for this use case |
+| Efficient for frame-by-frame work | The debugging is genuinely unpleasant under time pressure |
+
+**moviepy**
+
+| Good at | Bad at |
+|---|---|
+| The friendliest API; good for editing and composition | Built for editing, not extraction; slow, and it pulls in more than is needed |
+| | Historically loose about its own ffmpeg dependency |
+
+### Chosen: `imageio-ffmpeg`, driven by `subprocess.run`
+
+**Why it suits this project specifically.** Two commands are needed, forever:
+
+```
+-vf fps=1/2,scale=512:-1 -frames:v 8   → eight JPEGs
+-ac 1 -ar 16000 -vn                     → mono 16 kHz WAV
+```
+
+That is the entire requirement. A binary that arrives with `pip install` and two `subprocess` calls is a smaller surface than a bindings library, it keeps the Dockerfile to one package manager, and it fails in a way that is legible — a non-zero exit code and stderr, rather than a segfault inside a shared library.
+
+The apt route is the safer answer on codec coverage and would be the right call for a service that ingests arbitrary user media at scale. For a bounded set of consumer video formats, the static build covers it, and 180 MB of image and several minutes of build time are worth more here.
+
+**The missing `ffprobe`, handled rather than worked around.** [data-architecture.md](data-architecture.md) §7.6 takes duration from the extracted WAV instead, and never collects fps, codec or bitrate — because no consumer of this platform has asked for them. If a consumer does, that is the moment to add `ffprobe`, not before.
+
+**Trigger to switch:** codec failures on real user uploads, or a genuine need for frame-accurate seeking that shelling out cannot give.
+
+---
+
+## 16. Transcription
+
+Turning a video's audio track into text. The most valuable single signal for every media problem this platform serves — what was said usually matters more than what was shown.
+
+### Candidates
+
+**Gemini audio input**
+
+| Good at | Bad at |
+|---|---|
+| No local weights, no model download, no torch — the container stays small | A hard network dependency on the critical path |
+| Strong multilingual quality, Vietnamese included | Per-call cost, and it scales with usage rather than being fixed |
+| The same SDK and the same key already used for captioning | Audio leaves the machine, which is a governance question ([data-architecture.md](data-architecture.md) §14) |
+| One less component to operate and version | Latency is the provider's, not yours; a slow day is your slow day |
+
+**`faster-whisper`**
+
+| Good at | Bad at |
+|---|---|
+| Fully offline once the weights are baked into the image | ~150 MB of weights for `base`, plus the `ctranslate2` runtime |
+| CTranslate2, so **no torch** — the install stays under control | Wheels depend on prebuilt `ctranslate2` binaries for the platform |
+| `base` at `int8` runs roughly 8–12× realtime on a laptop CPU | Quality below a frontier hosted model, especially on Vietnamese |
+| Fixed cost — no per-call charge | A model to choose, a size to tune, a warm-up to manage |
+
+**`whisper.cpp`**
+
+| Good at | Bad at |
+|---|---|
+| Extremely small; excellent on constrained hardware | A binary to build or vendor; bindings are a third-party concern |
+| No Python ML stack at all | Another build step in the Dockerfile |
+
+**OpenAI or another hosted ASR API**
+
+| Good at | Bad at |
+|---|---|
+| Excellent quality; no local compute | A second provider, a second key, a second bill |
+| | Adds nothing over the provider already integrated |
+
+### Chosen: Gemini audio, behind the `Transcriber` port
+
+**Why it suits this project specifically.** The captioner is already a hosted call ([§17](#17-frame-understanding)), so transcription being hosted adds no *new* class of dependency — it adds a second call to a provider already on the critical path. In exchange the container carries no model weights, the build stays minutes rather than tens of minutes, and there is one less thing to warm up before a demo.
+
+**The trade is real and is not hidden.** A network failure takes out transcription, and unlike an embedding model there is no local fallback in the image. The mitigation is architectural rather than infrastructural: [data-architecture.md](data-architecture.md) §7.6 caches every derivation on `content_hash + extractor_version`, so any asset processed once is immune, and a known set of demo assets can be processed in advance. That covers the realistic failure — the venue network dying — while leaving genuinely novel input exposed. Stating which failure is covered and which is not is the honest version of this decision.
+
+**`faster-whisper` is the designated successor, not a rejected option.** It sits behind the same port, so adopting it is one adapter and a Dockerfile line. [data-architecture.md](data-architecture.md) §17 names three triggers: the network dependency becoming unacceptable, Vietnamese quality becoming the binding constraint, or a customer refusing to let audio leave the machine. Any one of them is sufficient.
+
+---
+
+## 17. Frame understanding
+
+Turning sampled frames into something searchable: what is in the frame, what text is on screen, and whatever structured signals the business domain needs.
+
+### Candidates
+
+**A vision-language model, one batched call per asset**
+
+| Good at | Bad at |
+|---|---|
+| Caption, on-screen text and structured signals arrive in **one** response | A hosted call — cost, latency and a network dependency |
+| Reads Vietnamese overlay text well, including stylised and low-contrast cases | Non-deterministic; the same frames can yield different words |
+| The prompt is the only place business logic lives, so retargeting is a string change | Quality depends on prompt quality, which is real work |
+| Output is text, so the existing index, contracts and retrieval all apply unchanged | Per-request image limits constrain the frame count |
+
+**CLIP or another multimodal embedding model**
+
+| Good at | Bad at |
+|---|---|
+| Genuine visual similarity — matches how a frame *looks*, not how it is described | A second vector space, a second index and a second retrieval path |
+| Deterministic and cheap once the model is loaded | Pulls torch into a slim image: gigabytes, and a long build |
+| Excellent for near-duplicate and style matching | Produces no text, so it cannot feed the agent's context or a report |
+
+**tesseract**
+
+| Good at | Bad at |
+|---|---|
+| Mature, offline, free; the default answer for OCR | Weak on stylised overlay text, gradients and low contrast — which is what social video *is* |
+| Small | Vietnamese diacritics need the right traineddata and still degrade |
+| | A system package, and a whole pipeline stage that a VLM absorbs for free |
+
+**PaddleOCR**
+
+| Good at | Bad at |
+|---|---|
+| Materially better than tesseract on hard text, good multilingual coverage | Drags in a deep-learning runtime — the image-size problem again |
+| | A second model to manage for a capability already covered |
+
+### Chosen: one batched VLM call per asset
+
+**Why it suits this project specifically.** The decisive property is not caption quality, it is **collapse**. One request returns the caption, the on-screen text and the structured signals, which means one network round trip per asset, one place to change when the business question changes, and no OCR stage in the pipeline at all. Against tesseract plus a captioner plus a signal extractor, this deletes two dependencies and two stages.
+
+Batching all frames into a single call is what makes it fit a request-time budget. Eight frames at one request is a few seconds; eight frames at eight requests is not, and it multiplies the failure surface by eight.
+
+**Why CLIP was rejected — and what would reverse it.** Rejected because it produces vectors, not words, and the agent layer needs words: a caption goes into a prompt, a report and a retrieved document; an embedding goes only into a similarity search. Adopting it means running both anyway, since the captions would still be needed. [data-architecture.md](data-architecture.md) §12.4 records where the caption-only choice breaks — near-duplicate detection over a catalog — and names the trigger as **an eval showing caption retrieval losing**, not a suspicion that it might. The cheap answer to that specific failure is a perceptual hash and a `bigint` column, not a second embedding space.
+
+**On determinism.** A VLM will not return identical text for identical frames, which is uncomfortable for a data layer. The content-hash cache makes it a non-issue in practice: an asset is captioned once and the stored result is what everything downstream sees, so the pipeline is deterministic even though the model is not. Re-deriving is an explicit act — bumping `extractor_version`.
+
+**Trigger to switch:** on-screen text extraction becoming the binding constraint on quality, at which point a dedicated OCR model earns its stage.
+
+---
+
+## 18. Serving API framework
+
+The HTTP process that serves the agent layer on `:8002` ([data-architecture.md](data-architecture.md) §11.4). Four handlers, no state.
+
+### Candidates
+
+| Candidate | Good at | Bad at |
+|---|---|---|
+| **FastAPI** | Pydantic-native, so request and response models are the contract; generates OpenAPI at `/docs`; the most widely known Python API framework; async throughout | Heavier than the four handlers strictly need; brings starlette and uvicorn |
+| **Litestar** | Cleaner DI, arguably better structured for large applications; comparable performance | A smaller community; a second framework idiom for the team to hold |
+| **Flask** | Everybody knows it; minimal | Sync by default, no typed models, no schema generation — all three of which are load-bearing here |
+| **A plain ASGI app** | No dependency at all | Hand-written routing, validation and error handling, done badly under time pressure |
+
+### Chosen: FastAPI + uvicorn
+
+**Why it suits this project specifically.** Two reasons, both about the surrounding system rather than the framework.
+
+First, **the other pods are FastAPI**. [integration-architecture.md](../docs/architecture/integration-architecture.md) §2 specifies it for the agent pod, and §4.1 makes the auto-generated `/docs` the mechanism by which pods keep their schemas in sync without sharing code. A data pod that generated no OpenAPI would break that mechanism for its own contract.
+
+Second, **Pydantic is already the record-contract tool** (§8). The response DTOs in `interface/api/schemas.py` are Pydantic models like every other record contract in the layer, which means one validation idiom rather than two.
+
+Litestar would work and is arguably the better-designed framework. Rejected on the same criterion 3 that decided dbt over SQLMesh: recognisability and consistency with what is already running beat a design margin.

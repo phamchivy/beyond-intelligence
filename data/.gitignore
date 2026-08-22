@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.env
+seeds/*
+!seeds/.gitkeep
+evaluation/reports/*
+!evaluation/reports/.gitkeep
+*.egg-info/
+.tmp_dagster_home_*/

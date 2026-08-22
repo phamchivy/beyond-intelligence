@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: bi
+      POSTGRES_PASSWORD: bi
+      POSTGRES_DB: bi
+    ports: ["5432:5432"]
+    volumes:
+      - ./sql/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bi"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: .
+    ports: ["8002:8002"]
+    env_file: .env
+    environment:
+      # override .env's localhost default -- inside the compose network the
+      # database is reachable by service name, not by the host's localhost
+      DATABASE_URL: postgresql://bi:bi@postgres:5432/bi
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Daily discover -> fetch -> analyze -> index pipeline (rag-trending-video.md).
+  # Runs on its own cron schedule inside the container (03:00 UTC); this
+  # service just needs to stay up for that scheduler to exist.
+  kalodata-cron:
+    build:
+      context: .
+      dockerfile: Dockerfile.pipeline
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://bi:bi@postgres:5432/bi
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata: {}

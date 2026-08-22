@@ -1,0 +1,366 @@
+"""The FastAPI edge: `/health` and the hybrid retrieval query.
+
+Holds no state and owns no data -- it reads Postgres and calls the same
+functions Dagster calls. `POST /api/v1/assets` and
+`GET /api/v1/assets/{id}` are not built here: both serve media artifacts
+this pass does not produce.
+"""
+
+from __future__ import annotations
+
+import math
+import time
+import uuid
+from datetime import date, datetime, timezone
+from typing import Any
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+
+from lib import db
+from lib.embedding import embed
+from lib.logging import get_logger, log_event
+from lib.rerank import rerank
+from lib.settings import settings
+from lib.storyboard import render_block
+
+logger = get_logger(__name__)
+app = FastAPI(title="Beyond Intelligence — Data API")
+
+
+class DataQueryRequest(BaseModel):
+    """Body for `POST /api/v1/data/query`."""
+
+    q: str
+    top_k: int = Field(default=settings.retrieval.top_k, ge=1)
+
+
+class TrendingVideosRequest(BaseModel):
+    """Body for `POST /api/v1/videos/trending`.
+
+    ``q`` should be ``productInfoJson.productName`` (falling back to
+    ``productInfoJson.productCategory`` when a brief has no product name
+    yet) -- kept as ``q``, not renamed, since `agent/`'s ``HttpJsonRetriever``
+    hardcodes that GET query-param name. The three optional fields below
+    enrich the *semantic* match only (see ``_run_trending``); they never
+    touch the lexical leg.
+    """
+
+    q: str
+    top_k: int = Field(default=5, ge=1)
+    key_message: str | None = None
+    audience_profile: str | None = None
+    product_features: str | None = None
+
+
+class ApiError(Exception):
+    """Raised to produce the shared `{"error": {...}}` envelope (decision 8.7)."""
+
+    def __init__(self, code: str, message: str, status_code: int = 400) -> None:
+        """Build the error with its code, message, and HTTP status."""
+        self.code = code
+        self.message = message
+        self.status_code = status_code
+        super().__init__(message)
+
+
+@app.exception_handler(ApiError)
+async def handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
+    """Render every ApiError as the shared error envelope, matching the other pods."""
+    request_id = uuid.uuid4().hex[:12]
+    log_event(logger, "error", "api_error", code=exc.code, request_id=request_id,
+              path=str(request.url.path))
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": {"code": exc.code, "message": exc.message, "request_id": request_id}},
+    )
+
+
+@app.on_event("startup")
+def startup() -> None:
+    """Apply the (idempotent) init SQL, then restore the index from its S3 snapshot.
+
+    Restore failure (no snapshot yet, S3 unreachable) must not block
+    startup -- the API is still usable against whatever Postgres already
+    has, the same tolerance `/health` gives a database blip.
+    """
+    db.apply_init_sql()
+    try:
+        restored = db.restore_index_from_delta()
+        if restored:
+            log_event(logger, "info", "index_restored_from_s3", chunk_count=restored)
+    except Exception:
+        log_event(logger, "warning", "index_restore_from_s3_failed")
+
+
+@app.get("/health")
+def health() -> dict[str, Any]:
+    """Always 200 while the process is alive (decision 8.6).
+
+    A 503 during a database blip would fail the compose healthcheck and
+    stop the other pods from ever starting, so `status` carries the
+    signal instead of the status code.
+    """
+    try:
+        chunks = db.chunk_count()
+        return {"status": "ok", "db": True, "chunks": chunks}
+    except Exception:
+        return {"status": "degraded", "db": False, "chunks": 0}
+
+
+def _normalise_scores(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalise RRF scores to [0, 1] by the maximum in the returned set.
+
+    This is presentation only -- RRF ranks, it does not score. Fused
+    values cluster near 1/61 ≈ 0.016, and mapping that straight into a
+    caller's confidence field would read as near-zero.
+    """
+    if not items:
+        return items
+    max_score = max(item["score"] for item in items) or 1.0
+    for item in items:
+        item["score"] = round(item["score"] / max_score, 4)
+    return items
+
+
+def _run_query(q: str, top_k: int) -> dict[str, Any]:
+    """Shared body for both the GET and POST `/api/v1/data/query` routes.
+
+    Args:
+        q: The query text.
+        top_k: Requested result count, clamped to `settings.retrieval.max_top_k`.
+
+    Returns:
+        The response body: `{"items": [{"id", "text", "score", "metadata"}]}`
+        -- a shape dictated by `agent/`'s `HttpJsonRetriever`, not chosen here.
+    """
+    top_k = min(top_k, settings.retrieval.max_top_k)
+    qvec = embed([q])[0]
+    rows = db.search(q, qvec, top_k=top_k)
+    items = [
+        {"id": r["chunk_id"], "text": r["content"], "score": float(r["score"]),
+         "metadata": r["metadata"]}
+        for r in rows
+    ]
+    items = _normalise_scores(items)
+    log_event(logger, "info", "retrieval_query", q=q, top_k=top_k, result_count=len(items))
+    return {"items": items}
+
+
+@app.get("/api/v1/data/query")
+def query_get(q: str, top_k: int = settings.retrieval.top_k) -> dict[str, Any]:
+    """GET variant of the query endpoint -- what `agent/`'s HttpJsonRetriever issues."""
+    return _run_query(q, top_k)
+
+
+@app.post("/api/v1/data/query")
+def query_post(body: DataQueryRequest) -> dict[str, Any]:
+    """POST variant of the query endpoint -- what integration-architecture.md specifies."""
+    return _run_query(body.q, body.top_k)
+
+
+# ============================================================ trending video storyboards
+
+
+def _age_days(metadata: dict[str, Any], *, now: float) -> float:
+    """How many days old a video is, preferring its real publish date.
+
+    ``creator_debut`` (Kalodata's video publish date) is the correct age
+    signal; ``fetched_at`` (when *we* downloaded it) is only a fallback for
+    rows indexed before ``creator_debut`` was captured -- otherwise a video
+    published a year ago but fetched yesterday would read as brand-new.
+
+    Args:
+        metadata: The chunk's metadata, carrying ``creator_debut`` and/or
+            ``fetched_at``.
+        now: Current Unix time, passed in so every candidate in one
+            request is scored against the same instant.
+
+    Returns:
+        Age in days, never negative.
+    """
+    debut = metadata.get("creator_debut")
+    if debut:
+        try:
+            published_at = datetime.combine(
+                date.fromisoformat(debut), datetime.min.time(), tzinfo=timezone.utc
+            ).timestamp()
+            return max(0.0, (now - published_at) / 86_400.0)
+        except ValueError:
+            pass
+    fetched_at = metadata.get("fetched_at")
+    if not fetched_at:
+        return 0.0
+    return max(0.0, (now - float(fetched_at)) / 86_400.0)
+
+
+def _trending_score(metadata: dict[str, Any], *, now: float) -> tuple[float, float]:
+    """Score one candidate video by revenue, decayed by its real age.
+
+    Decay rather than a date cutoff: a hard "last N days" filter returns
+    nothing at all on a thin bucket, and reads as a broken endpoint.
+
+    Args:
+        metadata: The chunk's metadata, carrying ``revenue`` and the
+            fields :func:`_age_days` reads.
+        now: Current Unix time, passed in so every candidate in one
+            request is scored against the same instant.
+
+    Returns:
+        A tuple of (``revenue`` halved once per ``trending_half_life_days``
+        of age, that age in days) -- callers needing just the score still
+        get the age for free instead of recomputing it.
+    """
+    revenue = float(metadata.get("revenue") or 0.0)
+    age_days = _age_days(metadata, now=now)
+    score = revenue * 0.5 ** (age_days / settings.retrieval.trending_half_life_days)
+    return score, age_days
+
+
+def _engagement_rate(metadata: dict[str, Any]) -> float | None:
+    """Engagement (likes+shares+comments) as a fraction of views.
+
+    A revenue-independent read on whether the storyboard itself resonated,
+    as opposed to converting through ad spend or an established storefront.
+    ``None`` when views are unknown -- a rate divided by zero is not "0%",
+    it's "can't tell".
+
+    Args:
+        metadata: The chunk's metadata, carrying ``digg_count``,
+            ``share_count``, ``comment_count`` and ``views``.
+
+    Returns:
+        The rate rounded to 4dp, or ``None`` if ``views`` is falsy.
+    """
+    views = metadata.get("views")
+    if not views:
+        return None
+    engagement = (metadata.get("digg_count") or 0) + (metadata.get("share_count") or 0) + (
+        metadata.get("comment_count") or 0
+    )
+    return round(engagement / views, 4)
+
+
+def _run_trending(
+    q: str, top_k: int, *,
+    key_message: str | None = None,
+    audience_profile: str | None = None,
+    product_features: str | None = None,
+) -> dict[str, Any]:
+    """Retrieve, then reorder by relevance (rerank score, trending as tiebreak).
+
+    Nothing is dropped for scoring low -- ``settings.retrieval.rerank_min_score``
+    is defined but not applied here yet (reorder only, no relevance gate).
+    A cross-encoder score has no calibrated meaning across models, and a
+    mistuned cutoff would silently hide legitimately relevant results the
+    same way an absent one lets an irrelevant one rank #1 on revenue alone.
+    The response's ``meta.relevance_gated: false`` says so explicitly, since
+    a caller reasoning over ``relevance`` has no other way to know that.
+
+    Args:
+        q: ``productInfoJson.productName`` (falling back to
+            ``productInfoJson.productCategory``) -- matched on both the
+            lexical and dense legs.
+        top_k: How many videos to return, clamped to ``max_top_k``.
+        key_message: The ad's intended selling angle. Matched only against
+            the dense leg's embedding, never the lexical leg -- a video's
+            own selling angle lives in its ``summary``/``hook``, folded into
+            the same per-video embedding ``q`` is compared against.
+        audience_profile: Who the ad targets. Same dense-leg-only matching;
+            weaker signal than ``key_message`` since no indexed field is
+            defined to hold it, so it only helps when a video's own
+            hook/voiceover happens to name a similar audience.
+        product_features: Concrete product attributes/specs. Real storyboard
+            scenes narrate features this literally (e.g. "anti-leak top",
+            "3 misting modes"), so this matches well against scene text.
+
+    Returns:
+        ``{"meta": {...}, "items": [...]}``, each item a video with its
+        full storyboard and a ``text`` rendition of the same content, for
+        callers (an LLM prompt, `agent/`'s ``HttpJsonRetriever``) that want
+        one string rather than nested fields.
+    """
+    top_k = min(top_k, settings.retrieval.max_top_k)
+    embed_text = " | ".join(
+        part for part in [q, key_message, audience_profile, product_features] if part
+    )
+    qvec = embed([embed_text])[0]
+    candidates = db.search(
+        q, qvec, top_k=settings.retrieval.candidate_k, source_type="video_storyboard"
+    )
+
+    scores = rerank(q, [c["content"] for c in candidates])
+    now = time.time()
+    ranked = sorted(
+        zip(candidates, scores, strict=True),
+        key=lambda pair: (pair[1], _trending_score(pair[0]["metadata"], now=now)[0]),
+        reverse=True,
+    )
+
+    items = []
+    for chunk, score in ranked[:top_k]:
+        meta = chunk["metadata"]
+        trending_score, age_days = _trending_score(meta, now=now)
+        items.append({
+            "id": meta.get("video_id"),
+            "video_id": meta.get("video_id"),
+            "title": meta.get("title"),
+            "url": meta.get("url"),
+            "category_name": meta.get("category_name"),
+            "product_name": meta.get("product_name"),
+            "matched_keyword": meta.get("matched_keyword"),
+            "revenue_usd": meta.get("revenue"),
+            "views_30d": meta.get("views"),
+            "ai_video": meta.get("ai_video"),
+            "is_ad": bool(meta.get("ad")),
+            "engagement_rate": _engagement_rate(meta),
+            "duration_s": meta.get("duration_s"),
+            "age_days": round(age_days, 1),
+            "relevance": round(1 / (1 + math.exp(-float(score))), 3),
+            "rerank_score": round(float(score), 4),
+            "trending_score": round(trending_score, 2),
+            "text": render_block(meta),
+            "storyboard": meta.get("storyboard", {}),
+        })
+
+    log_event(logger, "info", "trending_videos_query", q=q, top_k=top_k,
+              candidate_count=len(candidates), result_count=len(items))
+    return {
+        "meta": {
+            "query": q,
+            "key_message": key_message,
+            "audience_profile": audience_profile,
+            "product_features": product_features,
+            "currency": settings.kalodata.currency,
+            "metrics_window": "last30Day",
+            "candidates_considered": len(candidates),
+            "relevance_gated": False,
+        },
+        "items": items,
+    }
+
+
+@app.get("/api/v1/videos/trending")
+def trending_get(
+    q: str, top_k: int = 5,
+    key_message: str | None = None,
+    audience_profile: str | None = None,
+    product_features: str | None = None,
+) -> dict[str, Any]:
+    """GET variant: product or category name in, trending storyboards out."""
+    return _run_trending(
+        q, top_k,
+        key_message=key_message, audience_profile=audience_profile,
+        product_features=product_features,
+    )
+
+
+@app.post("/api/v1/videos/trending")
+def trending_post(body: TrendingVideosRequest) -> dict[str, Any]:
+    """POST variant of the trending-videos endpoint."""
+    return _run_trending(
+        body.q, body.top_k,
+        key_message=body.key_message, audience_profile=body.audience_profile,
+        product_features=body.product_features,
+    )
