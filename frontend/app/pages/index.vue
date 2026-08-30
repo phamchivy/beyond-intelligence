@@ -86,7 +86,7 @@ const statusLabel = (status: string) => {
       <div class="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-indigo-500/20 blur-3xl" />
     </section>
 
-    <!-- KPI Summary Cards -->
+    <!-- 4 Core KPIs -->
     <section class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <UCard class="border border-slate-200 dark:border-zinc-800">
         <div class="space-y-2">
@@ -97,10 +97,10 @@ const statusLabel = (status: string) => {
             </div>
           </div>
           <p class="text-2xl font-extrabold text-slate-900 dark:text-white">
-            ${{ (overviewData?.totalRevenue ?? 45200.5).toLocaleString('en-US') }}
+            {{ overviewData?.totalRevenue !== undefined ? `$${overviewData.totalRevenue.toLocaleString('en-US')}` : '---' }}
           </p>
           <p class="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-medium">
-            <UIcon name="lucide:trending-up" class="h-3 w-3" /> +14.2% so với tuần trước
+            <UIcon name="lucide:trending-up" class="h-3 w-3" /> Số liệu chiến dịch thời gian thực
           </p>
         </div>
       </UCard>
@@ -114,7 +114,7 @@ const statusLabel = (status: string) => {
             </div>
           </div>
           <p class="text-2xl font-extrabold text-slate-900 dark:text-white">
-            {{ overviewData?.profitMargin ?? 22.4 }}%
+            {{ overviewData?.profitMargin !== undefined ? `${overviewData.profitMargin}%` : '---' }}
           </p>
           <p class="text-xs text-indigo-600 dark:text-indigo-400 flex items-center gap-1 font-medium">
             <UIcon name="lucide:check" class="h-3 w-3" /> Tối ưu chi phí sản xuất AI
@@ -131,10 +131,10 @@ const statusLabel = (status: string) => {
             </div>
           </div>
           <p class="text-2xl font-extrabold text-slate-900 dark:text-white">
-            {{ overviewData?.activeCampaigns ?? 8 }}
+            {{ overviewData?.activeCampaigns !== undefined ? overviewData.activeCampaigns : '---' }}
           </p>
           <p class="text-xs text-slate-500">
-            3 chờ duyệt HITL • 2 đang render
+            Tổng số chiến dịch đang xử lý
           </p>
         </div>
       </UCard>
@@ -142,16 +142,21 @@ const statusLabel = (status: string) => {
       <UCard class="border border-slate-200 dark:border-zinc-800">
         <div class="space-y-2">
           <div class="flex items-center justify-between">
-            <span class="text-xs font-bold uppercase tracking-wider text-slate-500">Mức Độ Rủi Ro (QA)</span>
+            <span class="text-xs font-bold uppercase tracking-wider text-slate-500">Mức Độ Rủi Ro QA</span>
             <div class="rounded-lg bg-amber-500/10 p-1.5 text-amber-600 dark:text-amber-400">
               <UIcon name="lucide:shield-alert" class="h-4 w-4" />
             </div>
           </div>
-          <p class="text-2xl font-extrabold text-amber-600 dark:text-amber-400">
-            {{ overviewData?.riskLevel ?? 'MEDIUM' }}
-          </p>
+          <div class="flex items-center gap-2">
+            <p class="text-2xl font-extrabold text-slate-900 dark:text-white">
+              {{ overviewData?.riskLevel || 'AN TOÀN' }}
+            </p>
+            <UBadge :color="overviewData?.riskLevel === 'HIGH' ? 'error' : overviewData?.riskLevel === 'MEDIUM' ? 'warning' : 'success'" size="xs">
+              {{ overviewData?.riskLevel || 'LOW' }}
+            </UBadge>
+          </div>
           <p class="text-xs text-slate-500">
-            Kiểm duyệt Negative Claims an toàn
+            Tuân thủ chính sách quảng cáo TikTok
           </p>
         </div>
       </UCard>

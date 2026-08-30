@@ -4,8 +4,7 @@ import type {
   StoryboardReviewPayload,
   StoryboardReviewResponse,
   RenderStatusResponse,
-  DashboardOverviewResponse,
-  StoryboardPlan
+  DashboardOverviewResponse
 } from '../types/brief'
 
 export interface UploadBriefAssetPayload {
@@ -19,31 +18,6 @@ export interface UploadBriefAssetResponse {
   briefId: string
   assetType: string
   storageKey: string
-}
-
-// Agent storyboard plan uses hook/scenes/call_to_action with time ranges (order, time_start_seconds,
-// scene_description, on_screen_text). Adapt it to the flat scenes[] shape the UI renders.
-const mapAgentPlanToUiPlan = (plan: any): StoryboardPlan => {
-  if (!plan) return plan
-
-  const rawScenes = [
-    ...(plan.hook ? [plan.hook] : []),
-    ...(Array.isArray(plan.scenes) ? plan.scenes : []),
-    ...(plan.call_to_action ? [plan.call_to_action] : [])
-  ]
-
-  return {
-    ...plan,
-    scenes: rawScenes.map((s: any, idx: number) => ({
-      scene_number: idx + 1,
-      duration_ms: Math.round(((s.time_end_seconds ?? 0) - (s.time_start_seconds ?? 0)) * 1000),
-      visual_description: s.scene_description || '',
-      audio_script: s.on_screen_text || s.audio_note || '',
-      suggested_asset: s.suggested_asset
-    })),
-    soundtrack: plan.soundtrack || plan.production_notes?.music_style,
-    voiceover_tone: plan.voiceover_tone || plan.production_notes?.pacing_note
-  }
 }
 
 export const usePipelineApi = () => {
@@ -135,13 +109,13 @@ export const usePipelineApi = () => {
     }
 
     const formData = new FormData()
-    formData.append('product_info', JSON.stringify(productInfoObj))
-    formData.append('target_audience', JSON.stringify(audienceProfileObj))
-    formData.append('ad_objective', (payload.objective || 'conversion').toLowerCase())
-    formData.append('key_message', payload.keyMessage || `${payload.productName} - Giải pháp tối ưu`)
+    formData.append('productInfoJson', JSON.stringify(productInfoObj))
+    formData.append('targetAudienceJson', JSON.stringify(audienceProfileObj))
+    formData.append('adObjective', (payload.objective || 'conversion').toLowerCase())
+    formData.append('keyMessage', payload.keyMessage || `${payload.productName} - Giải pháp tối ưu`)
     formData.append('channel', (payload.channel || 'tiktok').toLowerCase())
-    formData.append('creative_reference', JSON.stringify({ url: payload.creativeReference || '' }))
-    formData.append('constraints', JSON.stringify(constraintsObj))
+    formData.append('creativeReferenceJson', JSON.stringify({ url: payload.creativeReference || '' }))
+    formData.append('constraintsJson', JSON.stringify(constraintsObj))
 
     if (Array.isArray(payload.assets)) {
       payload.assets.forEach((item) => {
@@ -153,42 +127,23 @@ export const usePipelineApi = () => {
       })
     }
 
-    const res = await fetchApi<{
-      task_id: string
-      storyboard_id: string
-      revision_number: number
-      plan: StoryboardPlan
-      task_status: string
-    }>('/pipeline/submit-brief', {
+    return await fetchApi<SubmitBriefResponse>('/pipeline/submit-brief', {
       method: 'POST',
       body: formData
     })
-
-    return {
-      taskId: res.task_id,
-      storyboardId: res.storyboard_id,
-      revisionNumber: res.revision_number,
-      plan: mapAgentPlanToUiPlan(res.plan),
-      taskStatus: res.task_status
-    }
   }
 
   // 4. HITL Review Storyboard (POST /api/v1/pipeline/review-storyboard)
   const reviewStoryboard = async ({ taskId, storyboardId, decision, feedback }: StoryboardReviewPayload): Promise<StoryboardReviewResponse> => {
-    const res = await fetchApi<StoryboardReviewResponse>('/pipeline/review-storyboard', {
+    return await fetchApi<StoryboardReviewResponse>('/pipeline/review-storyboard', {
       method: 'POST',
       body: {
-        task_id: taskId,
-        storyboard_id: storyboardId,
+        taskId,
+        storyboardId,
         decision, // 'approved' | 'needs_revision' | 'rejected'
         feedback: feedback || ''
       }
     })
-
-    if (res.plan) {
-      res.plan = mapAgentPlanToUiPlan(res.plan)
-    }
-    return res
   }
 
   // 5. Polling tiến trình Render (GET /api/v1/renders/{id})
@@ -211,4 +166,5 @@ export const usePipelineApi = () => {
     getDashboardOverview
   }
 }
+
 

@@ -2,7 +2,7 @@
 export default defineNuxtConfig({
   runtimeConfig: {
     public: {
-      appName: process.env.NUXT_PUBLIC_APP_NAME || 'Beyond Intelligence',
+      appName: process.env.NUXT_PUBLIC_APP_NAME || 'Beyond Videos',
       apiBase: process.env.NUXT_PUBLIC_API_BASE,
       demoMode: !process.env.NUXT_PUBLIC_DEMO_MODE ? true : ['true', '1', 'yes'].includes((process.env.NUXT_PUBLIC_DEMO_MODE || '').toLowerCase())
     }
@@ -14,7 +14,7 @@ export default defineNuxtConfig({
   ],
   devtools: {
     enabled: true
-  },  
+  },
   icon: {
     clientBundle: {
       scan: true,

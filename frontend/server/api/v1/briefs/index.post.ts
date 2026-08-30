@@ -34,5 +34,11 @@ export default defineEventHandler(async (event) => {
 
   mockBriefs.unshift(brief)
 
-  return { brief, message: 'Brief created successfully' }
+  return {
+    id,
+    status: 'draft',
+    message: 'Tạo Brief thành công.',
+    brief
+  }
 })
+

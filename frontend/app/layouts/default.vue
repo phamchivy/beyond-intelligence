@@ -1,5 +1,17 @@
 <script setup lang="ts">
 const { isDemoMode } = useApi()
+const colorMode = useColorMode()
+
+const isDark = computed({
+  get: () => colorMode.value === 'dark',
+  set: (val: boolean) => {
+    colorMode.preference = val ? 'dark' : 'light'
+  }
+})
+
+const toggleTheme = () => {
+  colorMode.preference = colorMode.value === 'dark' ? 'light' : 'dark'
+}
 
 const navItems = [
   { label: 'Tổng quan', to: '/' },
@@ -42,6 +54,18 @@ const navItems = [
 
         <!-- Right Controls -->
         <div class="flex items-center gap-3">
+          <!-- Theme Toggle (Light / Dark) -->
+          <ClientOnly>
+            <UButton
+              :icon="isDark ? 'lucide:moon' : 'lucide:sun'"
+              color="neutral"
+              variant="ghost"
+              size="sm"
+              :aria-label="isDark ? 'Chuyển sang chế độ sáng' : 'Chuyển sang chế độ tối'"
+              @click="toggleTheme"
+            />
+          </ClientOnly>
+
           <!-- Demo Mode Switcher -->
           <div class="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-100 px-3 py-1 dark:border-zinc-800 dark:bg-zinc-900">
             <span class="text-[10px] font-bold uppercase tracking-[0.18em]" :class="isDemoMode ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500'">
@@ -56,6 +80,7 @@ const navItems = [
         </div>
       </div>
     </header>
+
 
     <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6">
       <slot />

@@ -38,61 +38,83 @@ const toStringArray = (raw: string) => raw
   .map(item => item.trim())
   .filter(Boolean)
 
-const saveDraft = async () => {
-  const payload = {
-   title: form.title || form.productName || 'Campaign draft',
-   productName: form.productName,
-   productCategory: form.productCategory || form.productCategoryText,
-   productPrice: Number(form.productPrice || 0),
-   productUsp: form.productUsp,
-   productFeatures: toStringArray(form.productFeatures),
-   productOffer: form.productOffer,
-   allowedClaims: toStringArray(form.allowedClaims),
-   audienceProfile: form.audienceProfile,
-   objective: form.objective,
-   keyMessage: form.keyMessage,
-   channel: form.channel,
-   aspectRatio: form.aspectRatio,
-   creativeReference: form.creativeReference,
-   maxDurationMs: Number(form.maxDurationMs || 18000),
-   language: form.language,
-   requiredCta: form.requiredCta,
-   bannedClaims: toStringArray(form.bannedClaims),
-   bannedContent: toStringArray(form.bannedContent)
+const { getApiErrorMessage } = useApi()
+const toast = useToast()
+
+
+  const saveDraft = async () => {
+    try {
+      const payload = {
+        title: form.productName ? `${form.productName} Brief` : 'Bản nháp mới',
+        productName: form.productName,
+        productCategory: form.productCategory || form.productCategoryText,
+        productPrice: Number(form.productPrice || 0),
+        productUsp: form.productUsp,
+        productFeatures: toStringArray(form.productFeatures),
+        productOffer: form.productOffer,
+        allowedClaims: toStringArray(form.allowedClaims),
+        audienceProfile: form.audienceProfile,
+        objective: form.objective,
+        keyMessage: form.keyMessage,
+        channel: form.channel,
+        aspectRatio: form.aspectRatio,
+        creativeReference: form.creativeReference,
+        maxDurationMs: Number(form.maxDurationMs || 18000),
+        language: form.language,
+        requiredCta: form.requiredCta,
+        bannedClaims: toStringArray(form.bannedClaims),
+        bannedContent: toStringArray(form.bannedContent)
+      }
+
+      const response = await createBrief(payload)
+      toast.add({ title: 'Đã lưu nháp', description: 'Brief đã được lưu vào hệ thống.', color: 'success' })
+      await navigateTo(`/briefs/${response.id}`)
+    } catch (err: any) {
+      const errText = getApiErrorMessage(err)
+      toast.add({ title: 'Lưu nháp thất bại', description: errText, color: 'error' })
+    }
   }
 
-  const response = await createBrief(payload)
-  await navigateTo(`/briefs/${response.id}`)
-}
+  const submitForAiReview = async () => {
+    if (!form.productName.trim()) {
+      toast.add({ title: 'Thiếu thông tin', description: 'Vui lòng nhập tên sản phẩm.', color: 'warning' })
+      return
+    }
 
-const submitForAiReview = async () => {
-  const payload = {
-   productName: form.productName,
-   productCategory: form.productCategory || form.productCategoryText,
-   productPrice: Number(form.productPrice || 0),
-   productUsp: form.productUsp,
-   productFeatures: toStringArray(form.productFeatures),
-   productOffer: form.productOffer,
-   allowedClaims: toStringArray(form.allowedClaims),
-   audienceProfile: form.audienceProfile,
-   objective: form.objective,
-   keyMessage: form.keyMessage,
-   channel: form.channel,
-   aspectRatio: form.aspectRatio,
-   creativeReference: form.creativeReference,
-   maxDurationMs: Number(form.maxDurationMs || 18000),
-   language: form.language,
-   requiredCta: form.requiredCta,
-   bannedClaims: toStringArray(form.bannedClaims),
-   bannedContent: toStringArray(form.bannedContent),
-   assets: Object.values(assetFiles).flat()
+    try {
+      const payload = {
+        productName: form.productName,
+        productCategory: form.productCategory || form.productCategoryText,
+        productPrice: Number(form.productPrice || 0),
+        productUsp: form.productUsp,
+        productFeatures: toStringArray(form.productFeatures),
+        productOffer: form.productOffer,
+        allowedClaims: toStringArray(form.allowedClaims),
+        audienceProfile: form.audienceProfile,
+        objective: form.objective,
+        keyMessage: form.keyMessage,
+        channel: form.channel,
+        aspectRatio: form.aspectRatio,
+        creativeReference: form.creativeReference,
+        maxDurationMs: Number(form.maxDurationMs || 18000),
+        language: form.language,
+        requiredCta: form.requiredCta,
+        bannedClaims: toStringArray(form.bannedClaims),
+        bannedContent: toStringArray(form.bannedContent),
+        assets: Object.values(assetFiles).flat()
+      }
+
+      const response = await submitBriefForReview(payload)
+      toast.add({ title: 'Đã tạo Storyboard', description: 'Chuyển hướng đến cổng duyệt Storyboard...', color: 'success' })
+      const storyboardUrl = `/briefs/${response.storyboardId}/storyboard?taskId=${encodeURIComponent(response.taskId)}`
+      await navigateTo(storyboardUrl)
+    } catch (err: any) {
+      const errText = getApiErrorMessage(err)
+      toast.add({ title: 'Gửi cho AI thất bại', description: errText, color: 'error' })
+    }
   }
-
-  const response = await submitBriefForReview(payload)
-  const storyboardUrl = `/briefs/${response.storyboardId}/storyboard?taskId=${encodeURIComponent(response.taskId)}&storyboardText=${encodeURIComponent(response.storyboardText)}`
-  await navigateTo(storyboardUrl)
-}
 </script>
+
 
 <template>
   <div class="space-y-6">
