@@ -1,0 +1,7 @@
+{"case_id": "q001", "query": "chinh sach quang cao my pham", "expected_chunk_ids": ["DOC-75ca0642:document:01"], "lang": "vi"}
+{"case_id": "q002", "query": "chính sách quảng cáo mỹ phẩm", "expected_chunk_ids": ["DOC-75ca0642:document:01"], "lang": "vi"}
+{"case_id": "q003", "query": "muc phat vi pham lan dau", "expected_chunk_ids": ["DOC-75ca0642:document:04"], "lang": "vi"}
+{"case_id": "q004", "query": "quy trinh khieu nai 14 ngay", "expected_chunk_ids": ["DOC-75ca0642:document:03"], "lang": "vi"}
+{"case_id": "q005", "query": "dieu kien giam gia quang cao", "expected_chunk_ids": ["DOC-75ca0642:document:01"], "lang": "vi"}
+{"case_id": "q006", "query": "khoa kenh vinh vien", "expected_chunk_ids": ["DOC-75ca0642:document:02", "DOC-75ca0642:document:04"], "lang": "vi"}
+{"case_id": "q008", "query": "TikTok Shop Seller Center", "expected_chunk_ids": ["DOC-75ca0642:document:03"], "lang": "vi"}

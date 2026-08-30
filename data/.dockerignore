@@ -1,0 +1,12 @@
+.venv
+.git
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.env
+seeds
+evaluation/reports
+kalodata
+image_processor
+*.egg-info

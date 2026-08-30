@@ -1,18 +1,20 @@
 <script setup>
+const title = 'Beyond Intelligence'
+const description = 'Bảng điều khiển tạo video quảng cáo AI cho storytelling sản phẩm, render và phân tích chiến dịch.'
+
 useHead({
+  titleTemplate: '%s',
   meta: [
+    { name: 'description', content: description },
     { name: 'viewport', content: 'width=device-width, initial-scale=1' }
   ],
   link: [
     { rel: 'icon', href: '/favicon.ico' }
   ],
   htmlAttrs: {
-    lang: 'en'
+    lang: 'vi'
   }
 })
-
-const title = 'Nuxt Boilerplate'
-const description = 'A production-ready starter template powered by Nuxt UI. Build beautiful, accessible, and performant applications in minutes, not hours.'
 
 useSeoMeta({
   title,

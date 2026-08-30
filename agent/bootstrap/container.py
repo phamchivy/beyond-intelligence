@@ -17,10 +17,12 @@ from __future__ import annotations
 
 from application.agent.agent import Agent
 from application.agent.agent_factory import build_agent
+from application.context.context_builder import ContextBuilder
 from application.services.decision_service import DecisionService
 from application.services.storyboard_session_service import StoryboardSessionService
 from config.settings import LLMProvider, Settings, VideoProvider
 from config.settings import settings as _default_settings
+from domain.entities.context import RetrievedDocument
 from domain.policies.decision_policy import DecisionPolicy
 from domain.policies.retry_policy import RetryPolicy
 from domain.policies.tool_policy import ToolPolicy
@@ -122,6 +124,7 @@ def build_agent_from_settings(config: Settings | None = None) -> Agent:
         retry_policy=_build_retry_policy(cfg),
         tool_policy=_build_tool_policy(cfg),
         max_iterations=cfg.max_iterations,
+        context_builder=_build_context_builder(cfg),
     )
 
 

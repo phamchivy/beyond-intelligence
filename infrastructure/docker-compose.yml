@@ -1,0 +1,75 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: app_postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=mysecretpassword
+      - POSTGRES_DB=my_app_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d my_app_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    image: spemmmer/fe-beyond-intelligence:demo-v1.0
+    container_name: beyond_frontend
+    ports: ["3000:3000"]
+    environment:
+      - NUXT_PUBLIC_APP_NAME="Beyond Models"
+      - NUXT_PUBLIC_APP_DESCRIPTION="AI Short Video Ads Generator"
+      - NUXT_PUBLIC_API_BASE="http://localhost:8000/api/v1" # Sửa lại localhost nếu gọi từ browser của client
+      - NUXT_PUBLIC_DEMO_MODE="false"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  backend:
+    image: duytrong298/be-beyond-intelligence:demo-v1.1
+    container_name: beyond_backend
+    ports: ["8000:8000"]
+    environment:
+      # - DATABASE_URL=postgres://postgres:mysecretpassword@db:5432/my_app_db
+      - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=my_app_db;Username=postgres;Password=mysecretpassword
+      - AI_SERVICE_URL=http://ai:8001
+      - DATA_SERVICE_URL=http://data:8002
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      db:
+        condition: service_healthy
+
+  ai:
+    image: phamchivy/agent-beyond-intelligence:demo-v1
+    container_name: beyond_agent
+    ports: ["8001:8001"]
+    env_file:
+      - ../agent/.env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# Bắt buộc phải khai báo tên volume ở đây
+volumes:
+  postgres_data:
+
+networks:
+  default:
+    name: beyond-intelligence-net

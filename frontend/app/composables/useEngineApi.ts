@@ -1,53 +1,46 @@
-// composables/useEngineApi.ts
+type VideoUploadPayload = {
+  videoFile: File
+  productTitle: string
+  productCategory: string
+  targetMarket: string
+}
+
+type VideoUploadResponse = {
+  id: string
+  status: string
+  message?: string
+}
+
+type VideoScanDetail = {
+  analysisId: string
+  status: string
+  progress: number
+  details?: string[]
+}
+
 export const useEngineApi = () => {
-  const { fetchApi } = useApi()
+  const { fetchApi, isDemoMode } = useApi()
 
-  // 1. GetDashboardOverviewEndpoint (View 1: KPIs)
-  const getDashboardOverview = () => {
-    return fetchApi<{
-      totalRevenue: number
-      profitMargin: number
-      activeCampaigns: number
-      riskLevel: string
-      revenueTrend?: {
-        categories: string[]
-        series: Array<{ name: string; data: number[] }>
-      }
-    }>('/dashboard/overview')
-  }
+  const uploadVideo = async (payload: VideoUploadPayload): Promise<VideoUploadResponse> => {
+    const formData = new FormData()
+    formData.append('videoFile', payload.videoFile)
+    formData.append('productTitle', payload.productTitle)
+    formData.append('productCategory', payload.productCategory)
+    formData.append('targetMarket', payload.targetMarket)
 
-  // 2. RunSimulationEndpoint (View 2: Giả lập kịch bản What-If)
-  const runSimulation = (payload: { scenarioId: string; parameters: Record<string, any> }) => {
-    return fetchApi<{ simulationResult: any; status: string }>('/simulation/run', {
+    return await fetchApi<VideoUploadResponse>('/videos/upload', {
       method: 'POST',
-      body: payload
+      body: formData
     })
   }
 
-  // 3. GetDecisionEndpoint (View 3 & 5: Quyết định & AI Evidence)
-  const getDecision = (decisionId: string) => {
-    return fetchApi<{
-      id: string
-      title: string
-      confidence: number
-      evidences: string[]
-      recommendation: string
-      expectedImpact: string
-    }>(`/decision/latest`) // {decisionId}`) 
-  }
-
-  // 4. ExecuteWorkflowEndpoint (View 4: Phê duyệt & Trigger Action)
-  const executeWorkflow = (payload: { decisionId: string; approved: boolean; comment?: string }) => {
-    return fetchApi<{ success: boolean; message: string }>('/workflow/execute', {
-      method: 'POST',
-      body: payload
-    })
+  const getVideoScan = async (analysisId: string): Promise<VideoScanDetail> => {
+    return await fetchApi<VideoScanDetail>(`/video-scan/${analysisId}`)
   }
 
   return {
-    getDashboardOverview,
-    runSimulation,
-    getDecision,
-    executeWorkflow
+    isDemoMode,
+    uploadVideo,
+    getVideoScan
   }
 }

@@ -12,6 +12,7 @@ GeminiProvider that) ma khong doi code.
 from __future__ import annotations
 
 from application.agent.agent import Agent
+from application.context.context_builder import ContextBuilder
 from application.execution.executor import ToolExecutor
 from application.reasoning.reasoning_service import ReasoningService
 from domain.policies.retry_policy import RetryPolicy
@@ -28,6 +29,7 @@ def build_agent(
     tool_policy: ToolPolicy | None = None,
     system_prompt: str = "",
     max_iterations: int = 10,
+    context_builder: ContextBuilder | None = None,
 ) -> Agent:
     """
     Lap rap mot Agent tu cac dependency da co.
@@ -52,4 +54,5 @@ def build_agent(
         tool_executor=tool_executor,
         available_tools=tool_definitions,
         max_iterations=max_iterations,
+        context_builder=context_builder,
     )
